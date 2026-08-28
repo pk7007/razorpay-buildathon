@@ -78,24 +78,28 @@
         <div id="money-legend" class="money-legend"></div>
       </div>
 
-      <nav class="tabs" id="tabs">
-        <button data-tab="groups" class="active">Matched groups</button>
-        <button data-tab="exceptions">Exceptions</button>
-        <button data-tab="audit">Audit trail</button>
-        <button data-tab="metrics">Metrics</button>
+      <nav class="tabs" id="tabs" role="tablist" aria-label="Reconciliation result">
+        <button role="tab" data-tab="groups" class="active" aria-selected="true"
+          aria-controls="tab-groups">Matched groups</button>
+        <button role="tab" data-tab="exceptions" aria-selected="false"
+          aria-controls="tab-exceptions">Exceptions</button>
+        <button role="tab" data-tab="audit" aria-selected="false"
+          aria-controls="tab-audit">Audit trail</button>
+        <button role="tab" data-tab="metrics" aria-selected="false"
+          aria-controls="tab-metrics">Metrics</button>
       </nav>
 
-      <div id="tab-groups" class="tabpane">
+      <div id="tab-groups" class="tabpane" role="tabpanel">
         <div class="filters" id="group-filters"></div>
         <div id="groups-list" class="rows"></div>
       </div>
-      <div id="tab-exceptions" class="tabpane hidden">
+      <div id="tab-exceptions" class="tabpane hidden" role="tabpanel">
         <div id="exceptions-list" class="rows"></div>
       </div>
-      <div id="tab-audit" class="tabpane hidden">
+      <div id="tab-audit" class="tabpane hidden" role="tabpanel">
         <div id="audit-list" class="rows audit"></div>
       </div>
-      <div id="tab-metrics" class="tabpane hidden">
+      <div id="tab-metrics" class="tabpane hidden" role="tabpanel">
         <div id="metrics-body"></div>
       </div>
     </section>

@@ -54,9 +54,9 @@ LLM key — worst case):
 
 | dataset | entries | auto‑match | precision | recall | F1 | exception‑category accuracy | replay | engine time |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| clean | 125 | 100.0% | 1.000 | 1.000 | 1.000 | — (no anomalies) | stable | ~18 ms |
-| realistic | 348 | 98.3% | **1.000** | **1.000** | **1.000** | **100%** | stable | ~130 ms |
-| messy | 460 | 97.2% | **1.000** | **1.000** | **1.000** | **100%** | stable | ~180 ms |
+| clean | 125 | 100.0% | 1.000 | 1.000 | 1.000 | — (no anomalies) | stable | ~15 ms |
+| realistic | 352 | 98.3% | **1.000** | **1.000** | **1.000** | **100%** | stable | ~150 ms |
+| messy | 466 | 97.2% | **1.000** | **1.000** | **1.000** | **100%** | stable | ~160 ms |
 
 The un‑matched rows aren't misses — they're the injected anomalies (double‑booked
 entries, unrecorded bank credits, bank charges), each correctly categorised.

@@ -23,9 +23,13 @@ on whole groups — a single giant group can't inflate the score.
 
 | dataset | entries | groups | auto‑match | precision | recall | F1 | exc‑cat accuracy | replay | engine |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| clean | 125 | 30 | 100.0% | 1.000 | 1.000 | 1.000 | n/a | stable | ~18 ms |
-| realistic | 348 | 80 | 98.3% | 1.000 | 1.000 | 1.000 | 100.0% (6/6) | stable | ~130 ms |
-| messy | 460 | 111 | 97.2% | 1.000 | 1.000 | 1.000 | 100.0% (13/13) | stable | ~180 ms |
+| clean | 125 | 30 | 100.0% | 1.000 | 1.000 | 1.000 | n/a | stable | ~15 ms |
+| realistic | 352 | 82 | 98.3% | 1.000 | 1.000 | 1.000 | 100.0% (6/6) | stable | ~150 ms |
+| messy | 466 | 111 | 97.2% | 1.000 | 1.000 | 1.000 | 100.0% (13/13) | stable | ~160 ms |
+
+Stage mix (realistic): 2% deterministic‑only groups, 95% structural, **2%
+resolver** — the resolver pairs the off‑gateway transfers that carry no shared
+identifier.
 
 Money summary (realistic): reconciled ₹2,01,394 · in transit ₹3,009 ·
 **recoverable ₹9,053** · unrecorded ₹1,981.
@@ -48,6 +52,7 @@ correctly.
 | bank credit never booked | 0 | 2 | 5 | `missing_in_ledger` exception |
 | payout raised, credit after the window | 1 | 2 | 4 | `awaiting_payout` group |
 | bank deducted an extra charge | 0 | 2 | 4 | `fee_mismatch` exception (settlement named) |
+| off‑gateway transfer + booked entry (no shared id) | 0 | 2 | 3 | paired by the **residual resolver** (amount + date + counterparty name) |
 
 ## Targets (for the pitch)
 

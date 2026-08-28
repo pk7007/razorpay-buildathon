@@ -37,13 +37,16 @@ class Profile:
     missing_in_ledger: int              # bank credit never booked
     payout_in_transit: int              # settlement raised, bank credit outside window
     bank_charge_cases: int              # bank credit short by a small extra fee
+    off_gateway_transfers: int          # direct bank transfer + a booked ledger entry,
+    #                                     no shared reference -> only the resolver can pair them
 
 
+# fields after happy_per_day: split, merged, duplicates, missing_in_bank,
+# missing_in_ledger, payout_in_transit, bank_charge, off_gateway
 PROFILES: dict[str, Profile] = {
-    #                        days  happy/day  split merge dup miss_bank miss_ldgr transit charge
-    "clean":     Profile("clean",     6, (4, 6),   1,    0,   0,     0,        0,      1,     0),
-    "realistic": Profile("realistic", 10, (5, 9),  3,    2,   2,     2,        2,      2,     2),
-    "messy":     Profile("messy",     14, (4, 8),  5,    4,   5,     5,        4,      3,     4),
+    "clean": Profile("clean", 6, (4, 6), 1, 0, 0, 0, 0, 1, 0, 0),
+    "realistic": Profile("realistic", 10, (5, 9), 3, 2, 2, 2, 2, 2, 2, 2),
+    "messy": Profile("messy", 14, (4, 8), 5, 4, 5, 5, 4, 3, 4, 3),
 }
 
 
@@ -258,6 +261,29 @@ def _bank_charge(acc: _Acc, rnd: random.Random, day: date, lag: int) -> None:
     acc.truth[bid] = "fee_mismatch"
 
 
+_COUNTERPARTIES = [
+    "ACME EXPORTS", "NIMBUS RETAIL", "ORCHID TRADING", "PIXELWORKS LLP",
+    "VERTEX FOODS", "MERIDIAN LABS", "CEDAR & CO", "BLUEWAVE MEDIA",
+]
+
+
+def _off_gateway_transfer(acc: _Acc, rnd: random.Random, day: date) -> None:
+    """A customer pays by direct NEFT (not through the gateway) and finance books it.
+    Bank narration and ledger memo name the same counterparty but share no id, so
+    exact/structural rules leave two singletons — only the resolver can pair them."""
+    amt = rnd.randrange(40_000, 4_000_00)
+    who = rnd.choice(_COUNTERPARTIES)
+    inv = f"INV-{rnd.randrange(1000, 9999)}"
+    bid = acc.nid("bank")
+    lid = acc.nid("ldgr")
+    acc.bank.append(dict(id=bid, amount=_rupees(amt),
+                         value_date=(day + timedelta(days=rnd.randint(0, 1))).isoformat(),
+                         utr="", narration=f"NEFT INWARD {who} MUMBAI", type="credit"))
+    acc.ledger.append(dict(id=lid, amount=_rupees(amt), date=day.isoformat(),
+                           external_ref=inv, memo=f"{inv} {who} direct transfer"))
+    acc.labels[acc.nid("g")] = [bid, lid]
+
+
 def generate(profile: str = "realistic", seed: int = 7) -> dict:
     p = PROFILES[profile]
     rnd = random.Random(f"{profile}:{seed}")
@@ -283,6 +309,8 @@ def generate(profile: str = "realistic", seed: int = 7) -> dict:
         _payout_in_transit(acc, rnd, days[-1])
     for _ in range(p.bank_charge_cases):
         _bank_charge(acc, rnd, rnd.choice(days[:-1]), SETTLEMENT_LAG)
+    for _ in range(p.off_gateway_transfers):
+        _off_gateway_transfer(acc, rnd, rnd.choice(days[:-1]))
 
     # shuffle each export so ordering carries no signal
     for rows in (acc.payments, acc.settlements, acc.bank, acc.ledger):

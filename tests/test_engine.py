@@ -65,6 +65,16 @@ def test_offline_resolver_is_used_without_a_key(result):
     assert r.metrics.llm_calls == 0
 
 
+def test_resolver_actually_contributes_matches(result):
+    """The anomaly datasets include off-gateway transfers that only the residual
+    resolver can pair — deterministic + structural rules leave them as singletons."""
+    r, name = result
+    if name == "clean":
+        pytest.skip("clean has no resolver-only scenarios")
+    assert r.metrics.resolver_share > 0
+    assert any(g.stage in ("heuristic", "agent") for g in r.groups)
+
+
 def test_money_summary_is_coherent(result):
     r, _ = result
     mo = r.money

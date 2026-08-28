@@ -58,7 +58,10 @@ def test_upload_roundtrip(client):
         payload[field] = (fname, io.BytesIO((SAMPLE / fname).read_bytes()), "text/csv")
     r = client.post("/api/reconcile/upload", files=payload)
     assert r.status_code == 200
-    assert r.json()["metrics"]["total_entries"] == 348
+    # same row count as the bundled dataset (the upload path is file-source agnostic)
+    bundled = client.post("/api/reconcile", json={"dataset": "realistic"}).json()
+    assert r.json()["metrics"]["total_entries"] == bundled["metrics"]["total_entries"]
+    assert len(r.json()["groups"]) == len(bundled["groups"])
 
 
 def test_upload_requires_a_file(client):

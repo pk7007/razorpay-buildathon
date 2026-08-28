@@ -7,6 +7,23 @@ const el = (t, cls, txt) => {
   if (txt != null) n.textContent = txt;
   return n;
 };
+// an expandable row header: focusable, toggles on Enter/Space, tracks aria-expanded
+const expander = (onToggle) => {
+  const h = el("div", "row-head");
+  h.tabIndex = 0;
+  h.setAttribute("role", "button");
+  h.setAttribute("aria-expanded", "false");
+  const toggle = () => {
+    const open = h.getAttribute("aria-expanded") === "true";
+    h.setAttribute("aria-expanded", String(!open));
+    onToggle(!open);
+  };
+  h.addEventListener("click", toggle);
+  h.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+  });
+  return h;
+};
 const INR = (paise) =>
   "₹" + (paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 const INR2 = (paise) =>
@@ -137,11 +154,12 @@ function renderMoney(mo) {
   ];
   const tot = parts.reduce((s, p) => s + p[1], 0) || 1;
   const bar = $("#money-bar"); bar.innerHTML = "";
-  for (const [, val, col] of parts) {
+  for (const [name, val, col] of parts) {
     if (val <= 0) continue;
     const s = el("span");
-    s.style.width = (100 * val / tot).toFixed(2) + "%";
+    s.style.width = `max(6px, ${(100 * val / tot).toFixed(2)}%)`;
     s.style.background = col;
+    s.title = `${name}: ${INR(val)}`;
     bar.append(s);
   }
   const leg = $("#money-legend"); leg.innerHTML = "";
@@ -197,16 +215,17 @@ function paintGroups(filter) {
   const groups = RESULT.groups.filter((g) => filter === "all" || g.status === filter);
   for (const g of groups) {
     const row = el("div", "row");
-    const head = el("div", "row-head");
+    const detail = entryTable(g.entry_ids);
+    detail.classList.add("hidden");
+    const head = expander((open) => detail.classList.toggle("hidden", !open));
     const [cls, label] = STATUS_PILL[g.status] || ["neutral", g.status];
     head.append(el("span", "pill " + cls, label));
     head.append(el("span", "id", g.group_id + " · " + g.sources.join("+")));
     head.append(el("span", "pill neutral", "conf " + g.confidence.toFixed(2)));
     head.append(el("span", "amt", INR(g.amount_paise)));
-    const detail = entryTable(g.entry_ids);
-    detail.classList.add("hidden");
+    head.setAttribute("aria-label",
+      `Group ${g.group_id}, ${label}, ${INR(g.amount_paise)} — expand for entries`);
     const why = el("div", "row-why", g.rule + " — " + g.rationale);
-    head.onclick = () => detail.classList.toggle("hidden");
     row.append(head, why, detail);
     list.append(row);
   }
@@ -222,17 +241,20 @@ function renderExceptions() {
   }
   for (const x of RESULT.exceptions) {
     const row = el("div", "row exc");
-    const head = el("div", "row-head");
-    head.append(el("span", "pill " + (CAT_PILL[x.category] || "neutral"), x.category.replace(/_/g, " ")));
+    const detail = entryTable([x.entry_id]);
+    detail.classList.add("hidden");
+    const head = expander((open) => detail.classList.toggle("hidden", !open));
+    head.append(el("span", "pill " + (CAT_PILL[x.category] || "neutral"),
+      x.category.replace(/_/g, " ")));
     head.append(el("span", "id", x.entry_id + " · " + x.source));
     head.append(el("span", "pill neutral", "conf " + x.confidence.toFixed(2)));
     head.append(el("span", "amt", INR2(x.amount_paise)));
+    head.setAttribute("aria-label",
+      `${x.category.replace(/_/g, " ")}, ${x.entry_id}, ${INR2(x.amount_paise)} — expand for the row`);
     const why = el("div", "row-why", x.rationale);
     const action = el("div", "action");
-    action.innerHTML = "<b>Do:</b> " + x.suggested_action;
-    const detail = entryTable([x.entry_id]);
-    detail.classList.add("hidden");
-    head.onclick = () => detail.classList.toggle("hidden");
+    action.append(el("b", null, "Do: "));
+    action.append(document.createTextNode(x.suggested_action));
     row.append(head, why, action, detail);
     list.append(row);
   }
@@ -291,7 +313,11 @@ function metricCard(label, val) {
 }
 
 function switchTab(name, keepScroll = true) {
-  for (const b of $("#tabs").children) b.classList.toggle("active", b.dataset.tab === name);
+  for (const b of $("#tabs").children) {
+    const on = b.dataset.tab === name;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", String(on));
+  }
   for (const p of document.querySelectorAll(".tabpane")) p.classList.add("hidden");
   $("#tab-" + name).classList.remove("hidden");
   if (keepScroll) {
