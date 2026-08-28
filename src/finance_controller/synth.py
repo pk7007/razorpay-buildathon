@@ -335,8 +335,12 @@ def write_dataset(out_dir: str | Path, profile: str = "realistic", seed: int = 7
 
     for source in ("payments", "settlements", "bank", "ledger"):
         _write_csv(base / f"{source}.csv", data[source])
-    (base / "labels.json").write_text(json.dumps(data["labels"], indent=2), encoding="utf-8")
-    (base / "truth.json").write_text(json.dumps(data["truth"], indent=2), encoding="utf-8")
+    (base / "labels.json").write_text(
+        json.dumps(data["labels"], indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
+    (base / "truth.json").write_text(
+        json.dumps(data["truth"], indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     return base
 
 
