@@ -1,67 +1,140 @@
-"""Wire the stages together and write the out/ directory."""
+"""Wire the stages together into a single ``ReconResult``."""
 from __future__ import annotations
 
 import json
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
-from .agent import agent_match
 from .audit import AuditLog
-from .exceptions import build_exceptions
-from .ingest import load_from_dir
-from .metrics import score
-from .models import Entry
+from .config import SETTINGS
+from .exceptions import classify_residual, extract_duplicates
+from .ingest import load_dataset, load_from_dir
+from .metrics import (
+    classify_group,
+    money_summary,
+    result_fingerprint,
+    score_exceptions,
+    score_matches,
+)
+from .models import Entry, ReconResult
 from .normalize import normalize
-from .reconcile import deterministic_match
+from .reconcile import reconcile
+from .resolver import resolve
+
+_SOURCES = ("payment", "settlement", "bank", "ledger")
 
 
-def run(input_dir: str | Path, out_dir: str | Path, labels_path: str | Path | None = None) -> dict:
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    audit = AuditLog(out / "audit.jsonl")
+def run_rows(
+    rows_by_source: dict,
+    *,
+    dataset: str = "upload",
+    labels: dict | None = None,
+    truth: dict | None = None,
+    check_replay: bool = True,
+) -> ReconResult:
+    t0 = time.perf_counter()
+    audit = AuditLog()
 
-    raw = load_from_dir(input_dir)
     entries: list[Entry] = []
-    for source, rows in raw.items():
-        entries.extend(normalize(source, rows))
+    for source in _SOURCES:
+        entries.extend(normalize(source, rows_by_source.get(source, []) or []))
+    by_id = {e.id: e for e in entries}
 
-    det_groups, residual = deterministic_match(entries, audit)
-    agent_groups, leftover = agent_match(residual, audit)
-    all_groups = det_groups + agent_groups
+    groups, residual = reconcile(entries, audit)
+    groups, dup_exceptions = extract_duplicates(groups, by_id, audit)
 
-    exceptions = build_exceptions(leftover)
+    # anything pulled out as a duplicate is no longer residual, but a group that
+    # lost members down to <2 releases its remaining entry back to residual
+    residual = [e for e in residual if e.id not in {d.entry_id for d in dup_exceptions}]
+    kept_groups = []
+    for g in groups:
+        if len(g.entry_ids) >= 2:
+            kept_groups.append(g)
+        elif g.entry_ids:
+            residual.append(by_id[g.entry_ids[0]])
+    groups = kept_groups
 
-    # conservation check: every entry is either matched or an exception, exactly once
-    matched_ids = [i for g in all_groups for i in g.entry_ids]
+    res_groups, leftover, usage = resolve(residual, audit)
+    groups.extend(res_groups)
+
+    exceptions = dup_exceptions + classify_residual(leftover, entries, audit)
+
+    dataset_end = max((e.value_date for e in entries), default=None)
+    if dataset_end is not None:
+        for g in groups:
+            classify_group(g, by_id, dataset_end, SETTINGS.settlement_lag_days)
+
+    # conservation: every entry is matched exactly once or is an exception exactly once
+    matched_ids = [i for g in groups for i in g.entry_ids]
     exc_ids = [e.entry_id for e in exceptions]
     assert sorted(matched_ids + exc_ids) == sorted(e.id for e in entries), (
-        "conservation violated: entries were invented or dropped"
+        "conservation violated — entries were invented or dropped"
+    )
+    assert len(matched_ids) == len(set(matched_ids)), "an entry is in two groups"
+
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+    metrics = score_matches(
+        groups, labels, len(entries), latency_ms=latency_ms, usage=usage
+    )
+    metrics.exception_category_accuracy = score_exceptions(exceptions, truth)
+    money = money_summary(entries, groups, exceptions)
+
+    if check_replay:
+        fp1 = result_fingerprint(groups, exceptions)
+        replay = run_rows(
+            rows_by_source, dataset=dataset, labels=labels, truth=truth, check_replay=False
+        )
+        metrics.replay_stable = fp1 == result_fingerprint(replay.groups, replay.exceptions)
+
+    return ReconResult(
+        dataset=dataset,
+        generated_at=datetime.now(UTC),
+        entries=entries,
+        groups=sorted(groups, key=lambda g: g.group_id),
+        exceptions=sorted(exceptions, key=lambda e: (-e.amount_paise, e.entry_id)),
+        audit=audit.records,
+        money=money,
+        metrics=metrics,
+        resolver_mode="llm" if (SETTINGS.has_llm and usage.get("llm_calls")) else "heuristic",
     )
 
-    (out / "reconciliation.json").write_text(
-        json.dumps(
-            {
-                "groups": [g.model_dump(mode="json") for g in all_groups],
-                "exceptions": [e.model_dump(mode="json") for e in exceptions],
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
 
-    _write_exceptions_csv(out / "exceptions.csv", exceptions)
-
+def run_dir(input_dir: str | Path, labels_path: str | Path | None = None) -> ReconResult:
+    rows = load_from_dir(input_dir)
     labels = None
     if labels_path and Path(labels_path).exists():
         labels = json.loads(Path(labels_path).read_text(encoding="utf-8"))
-    metrics = score(all_groups, labels, total_entries=len(entries))
-    (out / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-
-    return metrics
+    name = Path(input_dir).name
+    return run_rows(rows, dataset=name, labels=labels)
 
 
-def _write_exceptions_csv(path: Path, exceptions) -> None:
-    lines = ["entry_id,category,confidence,suggested_action"]
-    for e in exceptions:
+def run_bundled(name: str) -> ReconResult:
+    rows, labels, truth = load_dataset(name)
+    return run_rows(rows, dataset=name, labels=labels or None, truth=truth or None)
+
+
+def write_outputs(result: ReconResult, out_dir: str | Path) -> None:
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "reconciliation.json").write_text(
+        result.model_dump_json(indent=2, exclude={"entries"}), encoding="utf-8"
+    )
+    (out / "metrics.json").write_text(
+        result.metrics.model_dump_json(indent=2), encoding="utf-8"
+    )
+    (out / "audit.jsonl").write_text(
+        "\n".join(r.model_dump_json() for r in result.audit) + "\n", encoding="utf-8"
+    )
+    _exceptions_csv(out / "exceptions.csv", result)
+
+
+def _exceptions_csv(path: Path, result: ReconResult) -> None:
+    lines = ["entry_id,source,amount_inr,value_date,category,confidence,suggested_action"]
+    for e in result.exceptions:
         action = e.suggested_action.replace(",", ";")
-        lines.append(f"{e.entry_id},{e.category},{e.confidence},{action}")
+        lines.append(
+            f"{e.entry_id},{e.source},{e.amount_paise/100:.2f},{e.value_date},"
+            f"{e.category},{e.confidence},{action}"
+        )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

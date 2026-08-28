@@ -1,11 +1,17 @@
-# Core
-razorpay>=1.4.2
-python-dotenv>=1.0.1
+# --- engine ---
 pydantic>=2.6
+python-dotenv>=1.0.1
 
-# LLM (residual matching only) — swap for your provider of choice
-anthropic>=0.39
+# --- api ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
 
-# Dev
+# --- integrations (optional at runtime) ---
+razorpay>=1.4.2          # Razorpay test-mode API pull
+anthropic>=0.39          # LLM residual resolver (falls back to heuristic without a key)
+
+# --- dev ---
 pytest>=8.0
+httpx>=0.27              # FastAPI TestClient
 ruff>=0.5
