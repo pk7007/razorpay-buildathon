@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt && pip install -e .
+      - run: python -m ruff check .
+      - run: python scripts/make_datasets.py
+      - run: git diff --exit-code data/   # datasets must be reproducible
+      - run: python -m pytest -q
+      - run: python scripts/run_reconciliation.py --dataset messy --out out/
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t finance-controller .
+      - run: |
+          docker run -d -p 8000:8000 --name fc finance-controller
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8000/api/health && break || sleep 1
+          done
+          curl -fsS -X POST http://localhost:8000/api/reconcile \
+            -H 'content-type: application/json' -d '{"dataset":"realistic"}' \
+            | python -c "import sys,json; m=json.load(sys.stdin)['metrics']; assert m['precision']==1.0 and m['recall']==1.0, m; print('ok', m)"
+          docker rm -f fc

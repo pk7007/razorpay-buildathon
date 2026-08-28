@@ -320,6 +320,6 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         return
     cols = list(rows[0].keys())
     with path.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=cols)
+        w = csv.DictWriter(fh, fieldnames=cols, lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
