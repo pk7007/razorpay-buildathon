@@ -78,9 +78,18 @@ def datasets() -> list[dict]:
     return out
 
 
+# keep responses lean and don't echo raw uploaded rows back over the wire
+_RESULT_EXCLUDE = {"entries": {"__all__": {"raw"}}}
+_MAX_FILE_BYTES = 8_000_000
+_MAX_ROWS = 20_000
 
 
-@app.post("/api/reconcile", response_model=ReconResult, response_model_exclude_none=True)
+@app.post(
+    "/api/reconcile",
+    response_model=ReconResult,
+    response_model_exclude_none=True,
+    response_model_exclude=_RESULT_EXCLUDE,
+)
 def reconcile_dataset(payload: dict) -> ReconResult:
     name = (payload or {}).get("dataset")
     if name not in available_datasets():
@@ -88,7 +97,12 @@ def reconcile_dataset(payload: dict) -> ReconResult:
     return run_bundled(name)
 
 
-@app.post("/api/reconcile/upload", response_model=ReconResult, response_model_exclude_none=True)
+@app.post(
+    "/api/reconcile/upload",
+    response_model=ReconResult,
+    response_model_exclude_none=True,
+    response_model_exclude=_RESULT_EXCLUDE,
+)
 async def reconcile_upload(
     payments: UploadFile | None = File(None),
     settlements: UploadFile | None = File(None),
@@ -99,17 +113,21 @@ async def reconcile_upload(
     if not any(files.values()):
         raise HTTPException(400, "upload at least one file")
     rows: dict = {}
+    total = 0
     for source, up in files.items():
         if up is None:
             rows[source] = []
             continue
         blob = await up.read()
-        if len(blob) > 8_000_000:
+        if len(blob) > _MAX_FILE_BYTES:
             raise HTTPException(413, f"{up.filename} exceeds 8 MB")
         try:
             rows[source] = parse_bytes(up.filename or f"{source}.csv", blob)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(422, f"could not parse {up.filename}: {exc}") from exc
+        total += len(rows[source])
+    if total > _MAX_ROWS:
+        raise HTTPException(413, f"{total} rows exceeds the {_MAX_ROWS}-row demo limit")
     return run_rows(rows, dataset="upload")
 
 

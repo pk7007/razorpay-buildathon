@@ -80,3 +80,19 @@ def test_index_served(client):
     r = client.get("/")
     assert r.status_code == 200
     assert "AI Finance Controller" in r.text
+
+
+def test_response_does_not_echo_raw_rows(client):
+    body = client.post("/api/reconcile", json={"dataset": "clean"}).json()
+    assert body["entries"] and all("raw" not in e for e in body["entries"])
+
+
+def test_upload_row_cap(client):
+    big = "id,amount,created_at,order_id\n" + "\n".join(
+        f"p{i},10.00,2026-07-01,O{i}" for i in range(20_001)
+    )
+    r = client.post(
+        "/api/reconcile/upload",
+        files={"payments": ("p.csv", io.BytesIO(big.encode()), "text/csv")},
+    )
+    assert r.status_code == 413
