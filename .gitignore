@@ -32,10 +32,8 @@ Thumbs.db
 out/
 *.log
 
-# Data — keep sample fixtures, ignore real exports
-data/*
-!data/sample/
-data/sample/*
-!data/sample/.gitkeep
-!data/sample/*.csv
-!data/sample/*.json
+# Data — the generated benchmark datasets are committed (deterministic, and the
+# thing being scored); ad-hoc user exports are not.
+/data/uploads/
+/data/*.csv
+/data/*.json

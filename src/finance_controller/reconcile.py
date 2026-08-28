@@ -249,7 +249,7 @@ def _p2s_why(s: Entry, u: _Unit, k: int) -> str:
     )
 
 
-_MAX_COMBOS = 300_000
+_MAX_COMBOS = 400_000
 
 
 def _subset_units(
@@ -260,27 +260,90 @@ def _subset_units(
     ``exact``       -> require an exact paise match (an accounting identity).
     ``common_date`` -> the subset's units must share at least one calendar date
                        (a real split batch / merged payout happens on one day).
-    Returns None on no match OR ambiguity (>1 subset) — ambiguity is never guessed."""
+    Returns None on no match OR ambiguity (>1 subset) — ambiguity is never guessed.
+
+    k=2 and k=3 use a two-pointer scan (O(n) / O(n^2)); k>=4 falls back to bounded
+    enumeration."""
     tol = 0 if exact else 1
     pool = sorted((u for u in pool if not u.consumed and 0 < key(u) <= target + tol), key=key)
-    if len(pool) > 40:            # too noisy to disambiguate safely -> leave to resolver
+    if len(pool) > 60:
         return None
+
+    if common_date:
+        # a real split batch / merged payout lands on ONE day: search each day
+        # independently, then require a single distinct winner across all days
+        by_day: dict = defaultdict(list)
+        for u in pool:
+            for d in u.dates:
+                by_day[d].append(u)
+        seen: set[frozenset[int]] = set()
+        winners: list[list[_Unit]] = []
+        for units in by_day.values():
+            w = _subset_units(units, target, exact=exact, max_k=max_k,
+                              key=key, common_date=False)
+            if w is not None:
+                sig = frozenset(id(u) for u in w)
+                if sig not in seen:
+                    seen.add(sig)
+                    winners.append(w)
+        return winners[0] if len(winners) == 1 else None
+
+    hits: list[tuple[_Unit, ...]] = []
+
+    def add(combo) -> bool:  # returns True once ambiguous (>1 distinct subset)
+        hits.append(combo)
+        return len(hits) > 1
+
+    v = [key(u) for u in pool]
+    vmap = {id(u): val for u, val in zip(pool, v)}
+    n = len(pool)
+
+    # k = 2 : two pointers
+    i, j = 0, n - 1
+    while i < j:
+        s = v[i] + v[j]
+        if abs(s - target) <= tol:
+            if add((pool[i], pool[j])):
+                return None
+            i += 1
+            j -= 1
+        elif s < target:
+            i += 1
+        else:
+            j -= 1
+    if len(hits) == 1:
+        return list(hits[0])
+
+    # k = 3 : fix one, two pointers on the rest
+    if max_k >= 3:
+        for a in range(n - 2):
+            lo, hi = a + 1, n - 1
+            while lo < hi:
+                s = v[a] + v[lo] + v[hi]
+                if abs(s - target) <= tol:
+                    if add((pool[a], pool[lo], pool[hi])):
+                        return None
+                    lo += 1
+                    hi -= 1
+                elif s < target:
+                    lo += 1
+                else:
+                    hi -= 1
+        if len(hits) == 1:
+            return list(hits[0])
+
+    # k >= 4 : bounded enumeration (rare — large split batches)
     budget = _MAX_COMBOS
-    for k in range(2, min(max_k, len(pool)) + 1):
-        hits: list[tuple[_Unit, ...]] = []
+    for k in range(4, min(max_k, n) + 1):
         for combo in combinations(pool, k):
             budget -= 1
             if budget <= 0:
                 return None
-            if common_date and not set.intersection(*(u.dates for u in combo)):
-                continue
-            if abs(sum(key(u) for u in combo) - target) <= tol:
-                hits.append(combo)
-                if len(hits) > 1:
-                    return None
+            if abs(sum(vmap[id(u)] for u in combo) - target) <= tol and add(combo):
+                return None
         if len(hits) == 1:
             return list(hits[0])
-    return None
+    return list(hits[0]) if len(hits) == 1 else None
 
 
 # --------------------------------------------------------------------------- helpers

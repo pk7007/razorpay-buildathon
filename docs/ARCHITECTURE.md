@@ -1,119 +1,121 @@
 # Architecture — AI Finance Controller
 
-## Goal
+## Principle
 
-Close the finance-ops reconciliation loop across four batch sources with a
-**deterministic-first, LLM-last** pipeline, producing a reproducible result, a
-replayable audit trail, and honest metrics.
-
-## Data sources
-
-| Source | Key fields | Normalized to |
-| --- | --- | --- |
-| Payments (Razorpay `payments` / `refunds`) | `id`, `amount` (paise), `created_at`, `order_id`, `status` | `Entry(source=payment)` |
-| Settlements (`settlements` + `settlement.recon`) | `id`, `amount`, `fees`, `tax`, `settled_at`, `utr` | `Entry(source=settlement)` |
-| Bank statement | `value_date`, `amount`, `narration`, `utr/ref` | `Entry(source=bank)` |
-| Ledger / books | `date`, `amount`, `memo`, `external_ref` | `Entry(source=ledger)` |
-
-All amounts are integer **paise**. All timestamps are converted to IST dates.
+**Deterministic‑first, LLM‑last, never guess.** Accounting reconciliation is
+mostly exact arithmetic; an LLM is only useful for the small ambiguous tail, and
+only if its output is checked. Every stage is auditable and the whole run is
+reproducible.
 
 ## Pipeline
 
 ```
-                    ┌─────────────┐
-  raw exports  ───► │  ingest.py  │  parse CSV/JSON, Razorpay API pull
-                    └──────┬──────┘
-                           ▼
-                    ┌─────────────┐
-                    │ normalize   │  → List[Entry]  (canonical schema, paise, IST)
-                    └──────┬──────┘
-                           ▼
-                    ┌──────────────────────┐
-                    │ deterministic match  │  Stage 1
-                    │  1. exact key match  │  (utr / ref / order_id)
-                    │  2. tolerant match   │  amount ±tol, date ±tol
-                    └──────┬───────────────┘
-                     matched│      │ residual (ambiguous / unmatched)
-                            ▼      ▼
-                    audit.log   ┌──────────────────────┐
-                                │ LLM match (agent)    │  Stage 2
-                                │  proposes groupings  │  residual set ONLY
-                                │  + rationale + conf  │
-                                └──────┬───────────────┘
-                          accepted ≥ θ │      │ < θ or refused
-                                       ▼      ▼
-                                 audit.log   exceptions.py
-                                                  │
-                                                  ▼
-                                          exceptions.csv  (category, confidence, action)
-                                                  │
-                              ┌───────────────────┴──────────────┐
-                              ▼                                  ▼
-                        reconciliation.json                 metrics.py → metrics.json
+ raw exports ─► ingest ─► normalize ─► reconcile ──────────────► resolver ─────► exceptions ─► metrics
+ (CSV/JSON /   parse    canonical    deterministic + structural   LLM or        categorise    P/R/F1,
+  Razorpay    rows      Entry list   union-find over entry ids    heuristic     the residual  money,
+  test API)                          (identities, never guess)    (conservation)  tail        audit, replay
 ```
+
+One call → one `ReconResult` (`models.py`): the entries, the match groups, the
+exceptions, the audit log, the money summary, the metrics.
 
 ## Modules (`src/finance_controller/`)
 
 | Module | Responsibility |
 | --- | --- |
-| `config.py` | env + tolerances, single `Settings` object |
-| `models.py` | `Entry`, `MatchGroup`, `Exception`, `AuditRecord` (pydantic) |
-| `ingest.py` | file + Razorpay test-mode API loaders → raw dicts |
-| `normalize.py` | raw dict → canonical `Entry` |
-| `reconcile.py` | Stage 1 deterministic matcher |
-| `agent.py` | Stage 2 LLM agent over the residual set |
-| `exceptions.py` | categorize + score every unmatched entry |
-| `audit.py` | append-only JSONL writer, one record per decision |
-| `metrics.py` | precision / recall / auto-match rate vs labels |
-| `pipeline.py` | wires the stages, writes `out/` |
+| `config.py` | env + tolerances in one frozen `Settings` (`has_llm`, `has_razorpay`) |
+| `models.py` | `Entry`, `MatchGroup`, `ReconException`, `AuditRecord`, `MoneySummary`, `RunMetrics`, `ReconResult` (pydantic) |
+| `synth.py` | deterministic benchmark generator + ground‑truth answer key |
+| `ingest.py` | load a directory, a bundled dataset, or the Razorpay test‑mode API; `parse_bytes` for uploads |
+| `normalize.py` | raw dict → canonical `Entry`; tolerant of junk (bad amounts/dates never crash a run) |
+| `reconcile.py` | the deterministic + structural matcher (below) |
+| `resolver.py` | residual resolver — LLM backend or heuristic backend, same contract |
+| `exceptions.py` | categorise every unmatched row; pull duplicates out of otherwise‑good groups |
+| `metrics.py` | pair‑based scoring, per‑group completeness status, rupee money summary, replay fingerprint |
+| `pipeline.py` | wires the stages; asserts conservation; runs the replay check |
+| `api.py` | FastAPI: JSON API + serves the `web/` dashboard |
 
-## Matching rules (Stage 1)
+## Canonical model
 
-1. **Exact** — same `utr` OR same `order_id` OR same `external_ref`, and amount
-   equal after fee/tax adjustment.
-2. **Tolerant** — amount within `AMOUNT_TOLERANCE_PAISE`, date within
-   `DATE_TOLERANCE_DAYS`, and exactly one candidate on each side. Ambiguity
-   (>1 candidate) is pushed to the residual set, never guessed.
+Money is **integer paise** everywhere. Dates are IST calendar dates. `Entry`
+carries `source`, `amount_paise`, `value_date`, a cleaned `reference`
+(UTR / order id / external ref, also mined out of bank narrations), and for
+settlements `fee_paise` + `tax_paise`.
 
-Rule id + version is stamped on every `AuditRecord` so a match can be traced to
-the exact logic that produced it.
+## Matching (`reconcile.py`)
 
-## Agent (Stage 2)
+A **union‑find over entry ids**. Each rule contributes merge edges tagged with a
+rule name, a confidence and a rationale; connected components become match
+groups. Rules run strongest‑first:
 
-- Input: only the residual entries (typically <10% of volume).
-- The model proposes match groups with a `rationale` and `confidence`.
-- Groups with `confidence >= θ` (default 0.80) and passing a hard amount-sum
-  check are accepted; everything else becomes an exception.
-- The agent may **never** invent an entry or silently drop one — the post-check
-  asserts `set(input_ids) == set(matched_ids) ∪ set(exception_ids)`.
+1. **`exact-reference`** — entries sharing a cleaned reference *and* agreeing on
+   amount (a shared ref with incompatible amounts — e.g. a bank charge — is *not*
+   force‑joined). Confidence 1.0.
+2. **`payment-to-settlement`** — the identity `Σ payment gross == net + fee + GST`
+   on the T+2 date. 1:1 links resolve first (unambiguous), which clears noise so
+   split batches (`split-settlement`) can be matched by a **unique same‑day
+   subset‑sum**. Confidence 0.92–0.98.
+3. **`bank-to-settlement` / `merged-bank-credit`** — `bank credit == Σ settlement
+   net` on the value date; 1:1 first, then a unique subset for consolidated
+   payouts. Confidence 0.88–0.96.
 
-## Exception categories
+Subset‑sum is bounded: k=2/k=3 use a two‑pointer scan, the search is partitioned
+by calendar day, and any ambiguity (more than one viable subset) returns nothing
+and defers to the resolver. Engine time stays sub‑200 ms for ~500 entries.
 
-`timing_gap`, `fee_mismatch`, `split_settlement`, `merged_payout`,
-`missing_in_bank`, `missing_in_ledger`, `duplicate`, `fx_or_adjustment`,
-`unknown`. Each row: `{entry_id, category, confidence, suggested_action}`.
+Each group gets a **completeness status** (`complete`, `awaiting_payout`,
+`payout_overdue`, `unbooked_payout`, …) from which legs are present and how old
+it is — this is what drives the "recoverable" rupee figure.
 
-## Audit trail
+## Residual resolver (`resolver.py`)
 
-`out/audit.jsonl`, append-only. One record per decision:
+Input = the entries no deterministic rule placed. Two interchangeable backends:
 
-```json
-{
-  "ts": "2026-08-28T10:15:03+05:30",
-  "stage": "deterministic|agent",
-  "rule": "tolerant-match@v1",
-  "inputs": ["pay_123", "bank_998"],
-  "outcome": "matched|exception",
-  "confidence": 1.0,
-  "rationale": "amount equal (paise), value_date within 1 day, single candidate"
-}
-```
+- **`llm`** — one call, `temperature=0`, strict JSON contract
+  (`{"groups":[{"entry_ids,confidence,rationale}]}`). Proposals below the
+  confidence threshold or naming unknown ids are rejected and audited. Token
+  counts and USD cost are recorded.
+- **`heuristic`** — a deterministic pair scorer over amount closeness, date
+  proximity, narration‑token Jaccard and reference echo. Used automatically when
+  no `ANTHROPIC_API_KEY` is set, so the product is 100% functional offline.
 
-Replaying the log against the same inputs must reproduce `reconciliation.json`
-byte-for-byte (deterministic stage) or group-for-group (agent stage, temp=0).
+The pipeline then **asserts conservation**: every entry is in exactly one group
+or is exactly one exception — the resolver cannot invent or lose a row.
 
-## Reproducibility
+## Exceptions (`exceptions.py`)
 
-- LLM calls pinned to `temperature=0` and a fixed model id.
-- All randomness seeded.
-- `out/` is regenerated, never edited by hand.
+Everything still unmatched becomes an explained exception:
+`missing_in_bank` (booked, never settled → recoverable), `missing_in_ledger`
+(bank credit never booked), `fee_mismatch` (short by a bank charge, with the
+matching settlement named), `duplicate` (same amount booked twice), … Each row:
+`{entry_id, category, confidence, rationale, suggested_action}`.
+
+## Audit & reproducibility
+
+`ReconResult.audit` is an ordered list of `AuditRecord` — one per decision, with
+inputs, rule@version, outcome, confidence, rationale. The CLI writes it to
+`out/audit.jsonl`. `metrics.result_fingerprint()` hashes the groups + exceptions;
+`pipeline.run_rows` re‑runs once and sets `replay_stable` from whether the
+fingerprints match. LLM calls are pinned to `temperature=0`.
+
+## Metrics (`metrics.py`)
+
+- **Precision / recall / F1** on *pairs* (two entries in the same group), which
+  avoids rewarding trivially large groups.
+- **Exception‑category accuracy** vs the dataset's `truth.json`.
+- **Money summary** in rupees: `reconciled`, `in_transit`, `recoverable`,
+  `unrecorded`, `in_exception`.
+- **Latency**, and when the LLM ran: calls, tokens, USD cost.
+
+## Frontend (`web/`)
+
+Buildless single page (vanilla JS + CSS, theme‑aware, responsive). Calls
+`/api/datasets` and `/api/reconcile[/upload]`, renders the KPI row, the money
+bar, and four tabs: matched groups (filter by status, expand to entries),
+exceptions (category + reason + action), audit trail, metrics vs targets.
+
+## Deploy
+
+`Dockerfile` (python:3.11‑slim, `uvicorn` on `:8000`, healthcheck on
+`/api/health`), `render.yaml` blueprint, `Procfile`. No database — a run is
+in‑memory and the response is the only copy of the result.

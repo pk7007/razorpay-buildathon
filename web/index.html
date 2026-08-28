@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Finance Controller</title>
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#129518;</text></svg>" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <div class="brand">
+        <span class="mark">◑</span>
+        <div>
+          <strong>AI Finance Controller</strong>
+          <span class="tag">Razorpay AI Buildathon</span>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <span id="resolver-badge" class="badge" title="Residual matcher backend">resolver: …</span>
+        <a class="ghost" href="/docs" target="_blank" rel="noopener">API</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section id="intro" class="intro">
+      <h1>Close a month's books in one click.</h1>
+      <p class="sub">
+        Drop in four exports — payments, settlements, bank statement, ledger — and the
+        controller reconciles every rupee: deterministic rules first, an AI resolver for
+        the ambiguous tail, a full audit trail, and an honest exception queue for what
+        genuinely doesn't tie out.
+      </p>
+
+      <div class="pick">
+        <div id="dataset-cards" class="cards"></div>
+        <details class="upload">
+          <summary>or reconcile your own exports</summary>
+          <form id="upload-form">
+            <div class="drops">
+              <label>Payments<input type="file" name="payments" accept=".csv,.json" /></label>
+              <label>Settlements<input type="file" name="settlements" accept=".csv,.json" /></label>
+              <label>Bank statement<input type="file" name="bank" accept=".csv,.json" /></label>
+              <label>Ledger<input type="file" name="ledger" accept=".csv,.json" /></label>
+            </div>
+            <button type="submit" class="run">Reconcile uploaded files</button>
+            <p class="hint">CSV or JSON. Nothing is stored — the run happens in memory and the
+              response is the only copy.</p>
+          </form>
+        </details>
+      </div>
+    </section>
+
+    <section id="loading" class="hidden panel center">
+      <div class="spinner"></div>
+      <p id="loading-msg">Reconciling…</p>
+    </section>
+
+    <section id="error" class="hidden panel error-panel">
+      <strong>That didn't work.</strong>
+      <p id="error-msg"></p>
+      <button class="ghost" onclick="location.reload()">Start over</button>
+    </section>
+
+    <section id="results" class="hidden">
+      <div class="result-head">
+        <h2 id="result-title">Reconciliation</h2>
+        <button class="ghost" id="run-again">Run another</button>
+      </div>
+
+      <div id="kpis" class="kpis"></div>
+
+      <div class="money">
+        <div id="money-bar" class="money-bar"></div>
+        <div id="money-legend" class="money-legend"></div>
+      </div>
+
+      <nav class="tabs" id="tabs">
+        <button data-tab="groups" class="active">Matched groups</button>
+        <button data-tab="exceptions">Exceptions</button>
+        <button data-tab="audit">Audit trail</button>
+        <button data-tab="metrics">Metrics</button>
+      </nav>
+
+      <div id="tab-groups" class="tabpane">
+        <div class="filters" id="group-filters"></div>
+        <div id="groups-list" class="rows"></div>
+      </div>
+      <div id="tab-exceptions" class="tabpane hidden">
+        <div id="exceptions-list" class="rows"></div>
+      </div>
+      <div id="tab-audit" class="tabpane hidden">
+        <div id="audit-list" class="rows audit"></div>
+      </div>
+      <div id="tab-metrics" class="tabpane hidden">
+        <div id="metrics-body"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap foot">
+    <span>Deterministic-first reconciliation · every match and exception is auditable.</span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

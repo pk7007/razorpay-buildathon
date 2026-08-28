@@ -1,0 +1,19 @@
+# Render.com blueprint — one-click deploy of the API + dashboard.
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: ai-finance-controller
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    plan: free
+    envVars:
+      # optional — without these the residual resolver runs its heuristic fallback
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: claude-sonnet-5
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false

@@ -1,0 +1,15 @@
+{
+  "ldgr_0490": "duplicate",
+  "ldgr_0496": "duplicate",
+  "ldgr_0502": "duplicate",
+  "ldgr_0508": "duplicate",
+  "ldgr_0514": "duplicate",
+  "bank_0531": "missing_in_ledger",
+  "bank_0532": "missing_in_ledger",
+  "bank_0533": "missing_in_ledger",
+  "bank_0534": "missing_in_ledger",
+  "bank_0549": "fee_mismatch",
+  "bank_0554": "fee_mismatch",
+  "bank_0559": "fee_mismatch",
+  "bank_0564": "fee_mismatch"
+}

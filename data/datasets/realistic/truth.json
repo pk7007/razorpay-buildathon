@@ -1,0 +1,8 @@
+{
+  "ldgr_0395": "duplicate",
+  "ldgr_0401": "duplicate",
+  "bank_0409": "missing_in_ledger",
+  "bank_0410": "missing_in_ledger",
+  "bank_0421": "fee_mismatch",
+  "bank_0426": "fee_mismatch"
+}

@@ -23,4 +23,4 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = ["C408", "B905"]
+ignore = ["C408", "B905", "B008"]  # B008: FastAPI Depends/File/Query defaults are idiomatic
