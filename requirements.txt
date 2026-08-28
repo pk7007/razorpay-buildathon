@@ -1,0 +1,11 @@
+# Core
+razorpay>=1.4.2
+python-dotenv>=1.0.1
+pydantic>=2.6
+
+# LLM (residual matching only) — swap for your provider of choice
+anthropic>=0.39
+
+# Dev
+pytest>=8.0
+ruff>=0.5

@@ -1,0 +1,3 @@
+id,amount,date,external_ref,memo
+ldgr_1,2500.00,2026-08-03,ORD3,Sale ORD3
+ldgr_2,1750.00,2026-08-08,ORD5,Sale ORD5 (no payout seen)

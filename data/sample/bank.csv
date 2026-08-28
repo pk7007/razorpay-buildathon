@@ -1,0 +1,4 @@
+id,amount,value_date,utr,narration
+bank_1,1000.00,2026-08-01,ORD1,UPI/ORD1/razorpay
+bank_2,5000.00,2026-08-05,UTR9,NEFT razorpay settlement
+bank_3,999.00,2026-08-07,UTRX,IMPS inward unidentified
