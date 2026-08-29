@@ -227,11 +227,16 @@ def _rule_payment_to_settlement(
     def window_units(s: Entry) -> list[_Unit]:
         return _near_dates(idx, s.value_date - timedelta(days=lag), 1)
 
+    # `done` holds ids, not Entry objects: list.remove() on a pydantic model is an
+    # O(n) scan of __eq__ calls and dominated the profile at 20k records
     pending = list(settlements)
+    done: set[str] = set()
     changed = True
     while changed:
         changed = False
-        for s in list(pending):
+        for s in pending:
+            if s.id in done:
+                continue
             pool = window_units(s)
             cands = [u for u in pool if u.gross == target(s)] or [
                 u for u in pool if abs(u.gross - target(s)) <= ROUNDING_SLACK_PAISE
@@ -240,8 +245,9 @@ def _rule_payment_to_settlement(
                 _link_unit(uf, cands[0], s, "payment-to-settlement@v1", 0.98,
                            _p2s_why(s, cands[0], 1))
                 cands[0].consumed = True
-                pending.remove(s)
+                done.add(s.id)
                 changed = True
+    pending = [s for s in pending if s.id not in done]
 
     # pass 2: split batches, resolved as a constraint problem rather than one
     # settlement at a time (see _assign_subsets)
@@ -280,18 +286,22 @@ def _rule_merged_bank_credit(
         return [u for u in _near_dates(idx, b.value_date, 1) if uf.find(u.root) != root]
 
     pending = list(banks)
+    done: set[str] = set()
     changed = True
     while changed:
         changed = False
-        for b in list(pending):
+        for b in pending:
+            if b.id in done:
+                continue
             cands = [u for u in window_units(b) if u.net == b.amount_paise]
             if len(cands) == 1:
                 _link_unit(uf, cands[0], b, "bank-to-settlement@v1", 0.96,
                            f"bank credit ₹{b.amount_paise/100:,.2f} on {b.value_date} "
                            f"equals settlement net {cands[0].ids}")
                 cands[0].consumed = True
-                pending.remove(b)
+                done.add(b.id)
                 changed = True
+    pending = [b for b in pending if b.id not in done]
 
     for b, subset in _assign_subsets(
         pending, window_units, lambda x: x.amount_paise, key=lambda u: u.net, max_k=4

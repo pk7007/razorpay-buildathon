@@ -4,7 +4,9 @@ Also pulls duplicate rows out of otherwise-good groups.
 """
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import defaultdict
+from dataclasses import dataclass
 
 from .audit import AuditLog
 from .config import SETTINGS
@@ -75,8 +77,18 @@ def classify_residual(
     tol = SETTINGS.amount_tolerance_paise
     out: list[ReconException] = []
 
+    # indices so categorising one entry is a lookup, not a scan of every entry:
+    # sorted amounts per source for "is there anything near this amount", and a
+    # settlement-by-reference map for the shared-UTR check
+    idx = _Indices(
+        amounts={src: sorted(x.amount_paise for x in rows) for src, rows in by_source.items()},
+        settlement_by_ref={
+            s.reference.lower(): s for s in by_source["settlement"] if s.reference
+        },
+    )
+
     for e in residual:
-        cat, conf, why = _categorize(e, by_source, tol)
+        cat, conf, why = _categorize(e, idx, tol)
         out.append(
             ReconException(
                 entry_id=e.id,
@@ -96,25 +108,38 @@ def classify_residual(
     return out
 
 
+@dataclass
+class _Indices:
+    amounts: dict[str, list[int]]
+    settlement_by_ref: dict[str, Entry]
+
+    def has_amount_near(self, source: str, amt: int, tol: int) -> bool:
+        """Binary search instead of scanning every row of that source."""
+        col = self.amounts.get(source)
+        if not col:
+            return False
+        i = bisect_left(col, amt - tol)
+        return i < len(col) and col[i] <= amt + tol
+
+
 def _categorize(
-    e: Entry, by_source: dict[str, list[Entry]], tol: int
+    e: Entry, idx: _Indices, tol: int
 ) -> tuple[ExceptionCategory, float, str]:
     amt = e.amount_paise
 
     if e.source == "bank" and amt > 0:
         # same UTR as a settlement but amount short -> a deduction happened
         if e.reference:
-            for s in by_source["settlement"]:
-                if s.reference and s.reference.lower() == e.reference.lower():
-                    diff = s.amount_paise - amt
-                    return (
-                        "fee_mismatch", 0.8,
-                        f"settlement {s.id} shares UTR {e.reference} but credit is "
-                        f"₹{diff/100:,.2f} short — likely a bank / processing charge",
-                    )
+            s = idx.settlement_by_ref.get(e.reference.lower())
+            if s is not None:
+                diff = s.amount_paise - amt
+                return (
+                    "fee_mismatch", 0.8,
+                    f"settlement {s.id} shares UTR {e.reference} but credit is "
+                    f"₹{diff/100:,.2f} short — likely a bank / processing charge",
+                )
         # no settlement, no ledger entry near the amount -> unrecorded income
-        near_ledger = any(abs(x.amount_paise - amt) <= tol for x in by_source["ledger"])
-        if not near_ledger:
+        if not idx.has_amount_near("ledger", amt, tol):
             return (
                 "missing_in_ledger", 0.75,
                 f"bank credit ₹{amt/100:,.2f} on {e.value_date} with no settlement and "
@@ -126,8 +151,7 @@ def _categorize(
         )
 
     if e.source == "ledger":
-        near_bank = any(abs(x.amount_paise - amt) <= tol for x in by_source["bank"])
-        if not near_bank:
+        if not idx.has_amount_near("bank", amt, tol):
             return (
                 "missing_in_bank", 0.7,
                 f"ledger income ₹{amt/100:,.2f} on {e.value_date} with no bank credit of a "
