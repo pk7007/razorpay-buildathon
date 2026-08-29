@@ -87,6 +87,8 @@
           aria-controls="tab-audit">Audit trail</button>
         <button role="tab" data-tab="metrics" aria-selected="false"
           aria-controls="tab-metrics">Metrics</button>
+        <button role="tab" data-tab="evidence" aria-selected="false"
+          aria-controls="tab-evidence">Evidence</button>
       </nav>
 
       <div id="tab-groups" class="tabpane" role="tabpanel">
@@ -101,6 +103,14 @@
       </div>
       <div id="tab-metrics" class="tabpane hidden" role="tabpanel">
         <div id="metrics-body"></div>
+      </div>
+      <div id="tab-evidence" class="tabpane hidden" role="tabpanel">
+        <p class="lead">
+          The matcher's rules were written against one seed. Everything below is scored on
+          seeds it has <strong>never seen</strong> — that gap is the only honest measure of
+          whether it generalises or was just fitted.
+        </p>
+        <div id="evidence-body"><div class="spinner"></div></div>
       </div>
     </section>
   </main>

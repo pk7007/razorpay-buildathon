@@ -36,6 +36,7 @@ const STATUS_PILL = {
   awaiting_payout: ["neutral", "awaiting payout"],
   payout_overdue: ["bad", "payout overdue"],
   unbooked_payout: ["warn", "unbooked payout"],
+  ambiguous_split: ["warn", "ambiguous split"],
   partial: ["warn", "partial"],
 };
 const CAT_PILL = {
@@ -52,7 +53,13 @@ document.addEventListener("DOMContentLoaded", init);
 async function init() {
   try {
     const h = await (await fetch("/api/health")).json();
-    $("#resolver-badge").textContent = "resolver: " + h.resolver;
+    const badge = $("#resolver-badge");
+    badge.textContent = "resolver: " + h.resolver;
+    badge.title = h.resolver === "llm"
+      ? "The residual tail goes to an LLM. If it fails or times out, the deterministic "
+        + "heuristic takes over and the run still completes."
+      : "No API key set, so the residual tail is resolved by the deterministic heuristic. "
+        + "Every number on this page is produced without an LLM.";
   } catch { /* non-fatal */ }
 
   try {
@@ -120,12 +127,13 @@ function render(title, roundtripMs) {
   $("#result-title").textContent = title;
   show("results");
 
+  const rate = m.latency_ms ? Math.round((m.total_entries / m.latency_ms) * 1000) : 0;
   const kpis = [
     ["auto-match", pct(m.auto_match_rate), "good"],
     ["precision", pct(m.precision), m.precision === 1 ? "good" : ""],
     ["recall", pct(m.recall), m.recall === 1 ? "good" : ""],
     ["exception accuracy", m.exception_category_accuracy == null ? "n/a" : pct(m.exception_category_accuracy), ""],
-    ["engine time", m.latency_ms + " ms", ""],
+    ["throughput", rate.toLocaleString("en-IN") + "/s", ""],
     ["replay", m.replay_stable ? "stable ✓" : "unstable", m.replay_stable ? "good" : ""],
   ];
   const kb = $("#kpis"); kb.innerHTML = "";
@@ -151,6 +159,7 @@ function renderMoney(mo) {
     ["in transit", mo.in_transit_paise, "var(--muted)", "settled or awaiting payout within the normal cycle"],
     ["recoverable", mo.recoverable_paise, "var(--bad)", "booked revenue that never reached the bank — chase it"],
     ["unrecorded", mo.unrecorded_paise, "var(--warn)", "bank credits with no ledger entry"],
+    ["ambiguous", mo.ambiguous_paise || 0, "var(--accent)", "paid out, but not uniquely attributable to one batch"],
   ];
   const tot = parts.reduce((s, p) => s + p[1], 0) || 1;
   const bar = $("#money-bar"); bar.innerHTML = "";
@@ -312,7 +321,109 @@ function metricCard(label, val) {
   return `<div class="m"><div class="mv">${val}</div><div class="ml">${label}</div></div>`;
 }
 
+let EVIDENCE_LOADED = false;
+
+async function loadEvidence() {
+  if (EVIDENCE_LOADED) return;
+  EVIDENCE_LOADED = true;
+  const box = $("#evidence-body");
+  try {
+    const [ev, bm] = await Promise.all([
+      fetch("/api/evaluation").then((r) => r.json()),
+      fetch("/api/benchmark").then((r) => r.json()),
+    ]);
+    box.innerHTML = "";
+    box.append(evidenceAccuracy(ev), evidenceThroughput(bm));
+  } catch (err) {
+    EVIDENCE_LOADED = false;
+    box.innerHTML = "";
+    const p = el("p", "hint", "Could not load evidence: " + (err.message || err));
+    const retry = el("button", "ghost", "Retry");
+    retry.onclick = () => { box.innerHTML = '<div class="spinner"></div>'; loadEvidence(); };
+    box.append(p, retry);
+  }
+}
+
+function evidenceAccuracy(ev) {
+  const wrap = el("section", "ev-block");
+  wrap.append(el("h3", null, "Accuracy on data the matcher has never seen"));
+
+  const t = el("table", "ev-table");
+  t.innerHTML =
+    "<tr><th></th><th class='num'>runs</th><th class='num'>entries</th>" +
+    "<th class='num'>precision</th><th class='num'>worst</th><th class='num'>recall</th>" +
+    "<th class='num'>F1</th><th class='num'>exc. category</th><th class='num'>₹ in wrong groups</th></tr>";
+  for (const [label, d, cls] of [
+    ["dev (rules tuned here)", ev.dev, "muted-row"],
+    ["held-out (unseen seeds)", ev.holdout, "hero-row"],
+  ]) {
+    const tr = el("tr", cls);
+    tr.innerHTML =
+      `<td>${label}</td><td class='num'>${d.runs}</td><td class='num'>${d.total_entries.toLocaleString("en-IN")}</td>` +
+      `<td class='num'>${pct(d.precision_mean)}</td><td class='num'>${pct(d.precision_worst)}</td>` +
+      `<td class='num'>${pct(d.recall_mean)}</td><td class='num'>${pct(d.f1_mean)}</td>` +
+      `<td class='num'>${pct(d.exception_category_accuracy_mean)}</td>` +
+      `<td class='num'>₹${d.false_match_cost_inr_total.toLocaleString("en-IN")}</td>`;
+    t.append(tr);
+  }
+  const scroll = el("div", "scroll-x");
+  scroll.append(t);
+  wrap.append(scroll);
+
+  const g = ev.generalisation_gap;
+  const note = el("p", "ev-note");
+  note.append(el("strong", null, `Generalisation gap: F1 ${(g.f1 * 100).toFixed(2)} pts. `));
+  note.append(document.createTextNode(
+    "A large gap would mean the rules were fitted to one dataset rather than to the " +
+    "accounting identities. Precision is the metric held hardest: a wrong auto-match " +
+    "silently closes the book on real money, while an exception just asks a human."
+  ));
+  wrap.append(note);
+
+  const runs = el("details", "ev-runs");
+  runs.append(el("summary", null, `every held-out run (${ev.holdout_runs.length})`));
+  const rt = el("table", "ev-table");
+  rt.innerHTML = "<tr><th>profile</th><th class='num'>seed</th><th class='num'>entries</th>" +
+    "<th class='num'>precision</th><th class='num'>recall</th><th class='num'>auto-match</th>" +
+    "<th class='num'>ms</th></tr>";
+  for (const r of ev.holdout_runs) {
+    const tr = el("tr", r.precision < 0.999 || r.recall < 0.999 ? "imperfect" : "");
+    tr.innerHTML =
+      `<td>${r.profile}</td><td class='num'>${r.seed}</td><td class='num'>${r.entries}</td>` +
+      `<td class='num'>${pct(r.precision)}</td><td class='num'>${pct(r.recall)}</td>` +
+      `<td class='num'>${pct(r.auto_match_rate)}</td><td class='num'>${r.latency_ms}</td>`;
+    rt.append(tr);
+  }
+  const rs = el("div", "scroll-x"); rs.append(rt); runs.append(rs);
+  wrap.append(runs);
+  return wrap;
+}
+
+function evidenceThroughput(bm) {
+  const wrap = el("section", "ev-block");
+  wrap.append(el("h3", null, "Throughput"));
+  const peak = Math.max(...bm.runs.map((r) => r.records_per_sec));
+  for (const r of bm.runs) {
+    const row = el("div", "bar-row");
+    row.append(el("span", "bar-label", r.records.toLocaleString("en-IN") + " rec"));
+    const track = el("span", "bar-track");
+    const fill = el("i");
+    fill.style.width = Math.max(3, (100 * r.records_per_sec) / peak) + "%";
+    track.append(fill);
+    row.append(track);
+    row.append(el("span", "bar-val", r.records_per_sec.toLocaleString("en-IN") + "/s"));
+    row.append(el("span", "bar-sub", r.seconds.toFixed(2) + "s"));
+    wrap.append(row);
+  }
+  wrap.append(el("p", "ev-note",
+    `Peak ${peak.toLocaleString("en-IN")} records/sec, single process, no database. ` +
+    `Track 4 asks for a 50+ record batch; the largest run here is ` +
+    `${Math.max(...bm.runs.map((r) => r.records)).toLocaleString("en-IN")}.`));
+  return wrap;
+}
+
 function switchTab(name, keepScroll = true) {
+  if (name === "evidence") loadEvidence();
   for (const b of $("#tabs").children) {
     const on = b.dataset.tab === name;
     b.classList.toggle("active", on);

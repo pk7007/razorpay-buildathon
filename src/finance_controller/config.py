@@ -33,6 +33,9 @@ class Settings:
     # USD per 1M tokens — override if you point at a different model.
     llm_input_usd_per_mtok: float = _float("LLM_INPUT_USD_PER_MTOK", 3.0)
     llm_output_usd_per_mtok: float = _float("LLM_OUTPUT_USD_PER_MTOK", 15.0)
+    # a reconciliation run must stay interactive: bound the model, then fall back
+    llm_timeout_seconds: float = _float("LLM_TIMEOUT_SECONDS", 20.0)
+    llm_max_retries: int = _int("LLM_MAX_RETRIES", 2)
 
     amount_tolerance_paise: int = _int("AMOUNT_TOLERANCE_PAISE", 100)   # 1.00 rupee
     date_tolerance_days: int = _int("DATE_TOLERANCE_DAYS", 3)

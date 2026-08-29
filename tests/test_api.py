@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from finance_controller import api
 from finance_controller.api import app
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,14 @@ SAMPLE = ROOT / "data" / "datasets" / "realistic"
 def client():
     with TestClient(app) as c:  # runs the lifespan warmup
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """The limiter is process-global; a shared bucket would make test order matter."""
+    api._hits.clear()
+    yield
+    api._hits.clear()
 
 
 def test_health(client):
@@ -87,12 +96,61 @@ def test_response_does_not_echo_raw_rows(client):
     assert body["entries"] and all("raw" not in e for e in body["entries"])
 
 
-def test_upload_row_cap(client):
+def test_upload_row_cap(client, monkeypatch):
+    """Rows are capped. Patched low so the test exercises the guard rather than
+    spending a minute actually reconciling 100k rows."""
+    monkeypatch.setattr(api, "_MAX_ROWS", 10)
     big = "id,amount,created_at,order_id\n" + "\n".join(
-        f"p{i},10.00,2026-07-01,O{i}" for i in range(20_001)
+        f"p{i},10.00,2026-07-01,O{i}" for i in range(50)
     )
     r = client.post(
         "/api/reconcile/upload",
         files={"payments": ("p.csv", io.BytesIO(big.encode()), "text/csv")},
     )
     assert r.status_code == 413
+    assert "exceeds" in r.json()["detail"]
+
+
+def test_upload_rejects_empty_file(client):
+    r = client.post(
+        "/api/reconcile/upload",
+        files={"payments": ("p.csv", io.BytesIO(b""), "text/csv")},
+    )
+    assert r.status_code == 422
+
+
+def test_error_bodies_never_echo_the_filename(client):
+    """A filename is client-controlled text; reflecting it verbatim is an XSS
+    vector for anything that renders the error."""
+    nasty = "<img src=x onerror=alert(1)>.csv"
+    r = client.post(
+        "/api/reconcile/upload",
+        files={"payments": (nasty, io.BytesIO(b"{bad"), "application/json")},
+    )
+    assert r.status_code == 422
+    body = r.text
+    assert "<img" not in body and "onerror" not in body
+
+
+def test_responses_carry_request_id_and_security_headers(client):
+    r = client.get("/api/health")
+    assert r.headers.get("X-Request-ID")
+    assert r.headers.get("X-Content-Type-Options") == "nosniff"
+    assert r.headers.get("X-Frame-Options") == "DENY"
+
+
+def test_rate_limit_kicks_in(client, monkeypatch):
+    monkeypatch.setattr(api, "_hits", {})
+    monkeypatch.setattr(api, "_RATE_LIMIT", 3)
+    codes = [
+        client.post("/api/reconcile", json={"dataset": "nope"}).status_code
+        for _ in range(5)
+    ]
+    assert 429 in codes, codes
+    monkeypatch.setattr(api, "_hits", {})
+
+
+def test_reconcile_rejects_non_string_dataset(client, monkeypatch):
+    monkeypatch.setattr(api, "_hits", {})
+    for bad in ({"dataset": 123}, {"dataset": None}, {}, {"dataset": ["clean"]}):
+        assert client.post("/api/reconcile", json=bad).status_code == 404

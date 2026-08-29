@@ -192,6 +192,32 @@ a { color: var(--accent); }
 .bar { height: 6px; background: var(--surface-2); border-radius: 3px; margin-top: 8px; overflow: hidden; }
 .bar > i { display: block; height: 100%; background: var(--ok); }
 
+/* evidence tab */
+.lead { color: var(--muted); font-size: .9rem; max-width: 72ch; margin: 0 0 18px; }
+.lead strong { color: var(--text); }
+.ev-block { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; }
+.ev-block h3 { margin: 0 0 14px; font-size: 1rem; letter-spacing: -.01em; }
+.scroll-x { overflow-x: auto; }
+.ev-table { border-collapse: collapse; width: 100%; font-size: .82rem; min-width: 620px; }
+.ev-table th, .ev-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.ev-table th { color: var(--muted); font-weight: 600; font-size: .74rem; text-transform: uppercase; letter-spacing: .03em; }
+.ev-table td.num, .ev-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.ev-table .muted-row td { color: var(--muted); }
+.ev-table .hero-row td { font-weight: 650; }
+.ev-table .hero-row { background: var(--ok-soft); }
+.ev-table .imperfect td { color: var(--warn); }
+.ev-note { font-size: .8rem; color: var(--muted); margin: 14px 0 0; max-width: 80ch; }
+.ev-runs { margin-top: 14px; }
+.ev-runs summary { cursor: pointer; font-size: .82rem; color: var(--muted); }
+.ev-runs .scroll-x { margin-top: 10px; }
+
+.bar-row { display: grid; grid-template-columns: 100px 1fr 90px 56px; gap: 10px; align-items: center; margin-bottom: 8px; font-size: .8rem; }
+.bar-label { color: var(--muted); font-variant-numeric: tabular-nums; }
+.bar-track { background: var(--surface-2); border-radius: 4px; height: 12px; overflow: hidden; }
+.bar-track > i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.bar-val { text-align: right; font-weight: 650; font-variant-numeric: tabular-nums; }
+.bar-sub { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
 .foot { color: var(--muted); font-size: .78rem; padding: 24px 20px 40px; }
 
 @media (max-width: 860px) {
@@ -213,4 +239,6 @@ a { color: var(--accent); }
   .result-head { flex-direction: column; align-items: flex-start; gap: 8px; }
   .tabs { overflow-x: auto; }
   .tabs button { white-space: nowrap; }
+  .bar-row { grid-template-columns: 78px 1fr 74px; }
+  .bar-sub { display: none; }
 }
