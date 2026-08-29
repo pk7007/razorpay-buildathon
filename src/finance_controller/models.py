@@ -33,6 +33,7 @@ GroupStatus = Literal[
     "awaiting_payout",      # settlement raised, bank credit due within the payout cycle
     "payout_overdue",       # settlement raised, payout should have landed -> recoverable
     "unbooked_payout",      # settled to bank but never recorded in the ledger
+    "ambiguous_split",      # part of a batch payout that could not be attributed uniquely
     "partial",              # some legs tied, others missing with no clean reason
 ]
 
@@ -98,7 +99,8 @@ class MoneySummary(BaseModel):
     in_transit_paise: int            # settled/awaiting payout within the normal cycle
     recoverable_paise: int           # payout overdue or never booked -> chase this
     unrecorded_paise: int            # bank credits with no ledger entry
-    in_exception_paise: int          # total rupee value sitting in exceptions
+    ambiguous_paise: int = 0         # paid out, but not uniquely attributable to a batch
+    in_exception_paise: int = 0      # total rupee value sitting in exceptions
 
 
 class RunMetrics(BaseModel):

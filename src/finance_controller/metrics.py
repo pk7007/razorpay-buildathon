@@ -79,7 +79,11 @@ def score_exceptions(
 
 
 def classify_group(
-    g: MatchGroup, by_id: dict[str, Entry], dataset_end, settlement_lag: int
+    g: MatchGroup,
+    by_id: dict[str, Entry],
+    dataset_end,
+    settlement_lag: int,
+    ambiguous_ids: set[str] | None = None,
 ) -> None:
     """Set ``g.status`` and ``g.sources`` from which legs are present and how recent."""
     members = [by_id[i] for i in g.entry_ids if i in by_id]
@@ -98,6 +102,10 @@ def classify_group(
         g.status = "unbooked_payout"
     elif "settlement" in srcs and has_book:
         g.status = "awaiting_payout" if days_old <= settlement_lag + 1 else "payout_overdue"
+    elif ambiguous_ids and any(i in ambiguous_ids for i in g.entry_ids):
+        # the payout exists; we just could not prove WHICH batch it belongs to.
+        # calling this "overdue" would send someone chasing money that arrived.
+        g.status = "ambiguous_split"
     elif has_book:  # payment / ledger only
         g.status = "awaiting_settlement" if days_old <= settlement_lag + 2 else "payout_overdue"
     else:
@@ -136,6 +144,7 @@ def money_summary(
         ),
         unrecorded_paise=total("unbooked_payout")
         + sum(e.amount_paise for e in exceptions if e.category == "missing_in_ledger"),
+        ambiguous_paise=total("ambiguous_split"),
         in_exception_paise=sum(e.amount_paise for e in exceptions),
     )
 

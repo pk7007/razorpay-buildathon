@@ -41,7 +41,7 @@ def run_rows(
         entries.extend(normalize(source, rows_by_source.get(source, []) or []))
     by_id = {e.id: e for e in entries}
 
-    groups, residual = reconcile(entries, audit)
+    groups, residual, ambiguous_ids = reconcile(entries, audit)
     groups, dup_exceptions = extract_duplicates(groups, by_id, audit)
 
     # anything pulled out as a duplicate is no longer residual, but a group that
@@ -63,7 +63,9 @@ def run_rows(
     dataset_end = max((e.value_date for e in entries), default=None)
     if dataset_end is not None:
         for g in groups:
-            classify_group(g, by_id, dataset_end, SETTINGS.settlement_lag_days)
+            classify_group(
+                g, by_id, dataset_end, SETTINGS.settlement_lag_days, ambiguous_ids
+            )
 
     # conservation: every entry is matched exactly once or is an exception exactly once
     matched_ids = [i for g in groups for i in g.entry_ids]

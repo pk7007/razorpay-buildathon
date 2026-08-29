@@ -16,6 +16,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = ["slow: benchmark-style tests (deselect with -m 'not slow')"]
 
 [tool.ruff]
 line-length = 100
