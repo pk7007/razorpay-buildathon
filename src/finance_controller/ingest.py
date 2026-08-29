@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from pathlib import Path
 
 from .config import SETTINGS
@@ -51,10 +52,20 @@ def available_datasets() -> list[str]:
     return sorted(p.name for p in DATASETS_DIR.iterdir() if p.is_dir())
 
 
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
 def load_dataset(name: str) -> tuple[dict[Source, list[dict]], dict, dict]:
-    """Return (rows_by_source, labels, truth) for a bundled benchmark dataset."""
+    """Return (rows_by_source, labels, truth) for a bundled benchmark dataset.
+
+    The API only ever passes a name from ``available_datasets()``, but this is a
+    public function that joins its argument onto a path, so it validates the name
+    itself rather than trusting every future caller.
+    """
+    if not isinstance(name, str) or not _SAFE_NAME.match(name):
+        raise ValueError(f"invalid dataset name {name!r}")
     d = DATASETS_DIR / name
-    if not d.exists():
+    if not d.is_dir() or d.resolve().parent != DATASETS_DIR.resolve():
         raise FileNotFoundError(f"dataset {name!r} not found in {DATASETS_DIR}")
     rows = load_from_dir(d)
     labels = _maybe_json(d / "labels.json")

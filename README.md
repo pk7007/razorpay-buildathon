@@ -48,20 +48,50 @@ Drop in the four files. The controller:
 
 ## Results
 
-Three bundled benchmark datasets, generated deterministically with a ground‑truth
-answer key (`data/datasets/`), scored with the **offline heuristic resolver** (no
-LLM key — worst case):
+The matching rules were written against **one** seed. Scoring them on that seed
+would measure how well they were fitted, not whether they work — so everything
+below is scored on **five seeds the rules have never seen**, with the offline
+heuristic resolver (no LLM key: the worst case, not the best).
 
-| dataset | entries | auto‑match | precision | recall | F1 | exception‑category accuracy | replay | engine time |
+| | runs | entries | precision | worst run | recall | F1 | exception‑category accuracy | ₹ in wrong groups |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| clean | 125 | 100.0% | 1.000 | 1.000 | 1.000 | — (no anomalies) | stable | ~15 ms |
-| realistic | 352 | 98.3% | **1.000** | **1.000** | **1.000** | **100%** | stable | ~150 ms |
-| messy | 466 | 97.2% | **1.000** | **1.000** | **1.000** | **100%** | stable | ~160 ms |
+| dev (rules tuned here) | 3 | 943 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 100.0% | ₹0 |
+| **held‑out (unseen seeds)** | **15** | **4,631** | **1.0000** | **1.0000** | **0.9928** | **0.9962** | **96.8%** | **₹0** |
 
-The un‑matched rows aren't misses — they're the injected anomalies (double‑booked
-entries, unrecorded bank credits, bank charges), each correctly categorised.
-Regenerate the table any time with `python scripts/run_reconciliation.py`.
-Full method: [`docs/METRICS.md`](docs/METRICS.md).
+**Generalisation gap: 0.38 F1 points.** Every run replay‑stable.
+
+Precision is the metric held hardest, and it is the one reported per‑run rather
+than only as a mean: a wrong auto‑match silently closes the book on real money,
+while an exception merely asks a human. **Not one rupee landed in an incorrect
+group across 4,631 held‑out entries.**
+
+Recall is deliberately *not* 1.0. On one of fifteen runs the engine hits a batch
+payout where two different same‑day payment triples sum to the identical rupee.
+Amounts alone cannot decide it, so it refuses to guess, files an
+`ambiguous_split` with the reason, and takes the recall hit. That is the
+intended behaviour.
+
+### Throughput
+
+| records | time | records/sec |
+| --- | --- | --- |
+| 1,126 | 0.08 s | 13,527 |
+| 5,840 | 0.52 s | 11,194 |
+| 23,565 | 2.22 s | 10,622 |
+| 58,908 | 6.56 s | 8,976 |
+
+Single process, no database. Across a 50× range throughput degrades 1.5× —
+effectively linear. Track 4 asks for a 50+ record batch.
+
+Reproduce all of it:
+
+```bash
+python scripts/run_reconciliation.py --evaluate     # the held-out table
+python scripts/run_reconciliation.py --benchmark    # the throughput table
+```
+
+or hit `GET /api/evaluation` and `GET /api/benchmark` on the running service.
+Full method and the anomaly catalogue: [`docs/METRICS.md`](docs/METRICS.md).
 
 ## Run it
 
@@ -99,21 +129,66 @@ structural) → `resolver` (LLM / heuristic) → `exceptions` → `metrics` →
 `pipeline` (one `ReconResult`). The FastAPI app in `api.py` serves both the JSON
 API and the dashboard in `web/`. Full write‑up: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+**There is deliberately no database and no auth.** A reconciliation is a pure
+function of the four batches it is handed; persisting it would add a breach
+surface and a consistency problem while adding nothing to accuracy. The response
+is the only copy of a result.
+
+### Where the AI is, and where it is not
+
+The LLM resolves only the **residual tail** — entries no accounting identity can
+place, such as an off-gateway bank credit that shares no identifier with the
+ledger entry it belongs to. It is not in the critical path:
+
+- **It works with the AI switched off.** No key ⇒ a deterministic heuristic
+  resolver takes over. Every number in this README was produced that way.
+- **Its output is checked, not trusted.** A proposal must name only real ids and
+  must *arithmetically reconcile* before it is accepted — the model's confidence
+  is an opinion, the arithmetic is a fact, and the fact wins.
+- **It cannot invent or lose a row.** The pipeline asserts that every entry ends
+  in exactly one group or exactly one exception.
+- **It is bounded**: temperature 0, 20 s timeout, 2 retries, a 150-entry cap, and
+  untrusted narration text flattened before it reaches the prompt.
+
 ## Tests
 
 ```bash
-python -m pytest -q        # 44 tests: engine correctness, conservation, synth
-python -m ruff check .     # lint
+python -m pytest -q            # 93 tests
+python -m pytest -q -m slow    # + the throughput benchmark test
+python -m ruff check .         # lint
 ```
+
+Covering: engine correctness, the conservation invariant, held-out
+generalisation thresholds, synth determinism, the API contract and every error
+path, resolver behaviour under a mocked model (including prompt injection), and
+security regressions (path traversal, error leakage, resource limits).
+
+## Track 4 bar, line by line
+
+> *"Build an agent that closes **one finance-ops loop** across a **50+ record
+> batch of synthetic data**, reporting its **match rate** and the **exceptions it
+> could not resolve**." Bar: "**Throughput** plus **measured accuracy** plus an
+> **honest exception list**."*
+
+| Requirement | Where it is |
+| --- | --- |
+| one finance-ops loop | four-way settlement reconciliation, and only that |
+| 50+ record synthetic batch | 125 / 352 / 466 bundled; 58,908 in the benchmark |
+| match rate reported | auto-match rate, per run and aggregated |
+| exceptions it could not resolve | categorised queue, each with a reason and an action |
+| throughput | table above, `--benchmark`, `GET /api/benchmark` |
+| measured accuracy | held-out table above, `--evaluate`, `GET /api/evaluation` |
+| honest exception list | non-zero, reasoned, and the one run it fails is written up |
 
 ## Submission checklist
 
 - [x] Public repository
 - [x] Architecture documentation → [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- [x] Working product with measurable results → the table above, reproducible
+- [x] Working product with measurable results → held-out table, reproducible
 - [x] Audit trail — `out/audit.jsonl`, replay‑checked
 - [x] Honest exception reporting — categorised, never dropped, conservation‑asserted
-- [ ] 5‑minute pitch video → link in [`docs/PITCH.md`](docs/PITCH.md)
+- [ ] 5‑minute pitch video → script ready in [`docs/PITCH.md`](docs/PITCH.md), not yet recorded
+- [ ] Deployed URL — `render.yaml` ready, not yet deployed
 
 ## License
 

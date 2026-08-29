@@ -28,15 +28,62 @@ def _fmt(paise: int) -> str:
     return f"₹{paise / 100:,.2f}"
 
 
+def _print_evaluation() -> None:
+    from finance_controller.evaluate import holdout_report
+
+    rep = holdout_report()
+    print("\n  Accuracy — rules were tuned on the dev seed; held-out seeds were never seen.\n")
+    head = f"  {'':26} {'runs':>5} {'entries':>8} {'precis':>8} {'worst':>8} " \
+           f"{'recall':>8} {'F1':>8} {'excCat':>8} {'₹ wrong':>9}"
+    print(head)
+    print("  " + "-" * (len(head) - 2))
+    for label, d in (("dev (tuned here)", rep["dev"]), ("held-out (unseen)", rep["holdout"])):
+        print(f"  {label:26} {d['runs']:>5} {d['total_entries']:>8,} "
+              f"{d['precision_mean']:>8.4f} {d['precision_worst']:>8.4f} "
+              f"{d['recall_mean']:>8.4f} {d['f1_mean']:>8.4f} "
+              f"{d['exception_category_accuracy_mean']:>8.3f} "
+              f"{d['false_match_cost_inr_total']:>9,.0f}")
+    g = rep["generalisation_gap"]
+    print(f"\n  generalisation gap: F1 {g['f1'] * 100:.2f} pts, recall {g['recall'] * 100:.2f} pts")
+    print(f"  all replay-stable: {rep['holdout']['all_replay_stable']}")
+    imperfect = [r for r in rep["holdout_runs"] if r["precision"] < 0.999 or r["recall"] < 0.999]
+    print(f"\n  imperfect runs: {len(imperfect)} of {len(rep['holdout_runs'])}")
+    for r in imperfect:
+        print(f"    {r['profile']:10} seed {r['seed']}  "
+              f"P={r['precision']:.4f}  R={r['recall']:.4f}")
+
+
+def _print_benchmark() -> None:
+    from finance_controller.evaluate import benchmark
+
+    res = benchmark((1_000, 5_000, 20_000, 50_000))
+    print("\n  Throughput — single process, no database.\n")
+    print(f"  {'records':>9} {'seconds':>9} {'records/sec':>13} {'auto-match':>11}")
+    print("  " + "-" * 45)
+    for r in res["runs"]:
+        print(f"  {r['records']:>9,} {r['seconds']:>9.2f} "
+              f"{r['records_per_sec']:>13,} {r['auto_match_rate']:>11.1%}")
+    print(f"\n  peak {res['peak_records_per_sec']:,} records/sec")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="AI Finance Controller — reconciliation run")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--dataset", choices=["clean", "realistic", "messy"],
                      help="a bundled benchmark dataset with a ground-truth answer key")
     src.add_argument("--input", help="directory containing payments/settlements/bank/ledger files")
+    src.add_argument("--evaluate", action="store_true",
+                     help="dev vs held-out accuracy across unseen seeds")
+    src.add_argument("--benchmark", action="store_true",
+                     help="throughput at increasing batch sizes")
     ap.add_argument("--labels", default=None, help="labels.json for metrics (with --input)")
     ap.add_argument("--out", default="out", help="output directory")
     args = ap.parse_args()
+
+    if args.evaluate:
+        return _print_evaluation()
+    if args.benchmark:
+        return _print_benchmark()
 
     result = run_bundled(args.dataset) if args.dataset else run_dir(args.input, args.labels)
     write_outputs(result, args.out)
