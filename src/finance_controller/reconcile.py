@@ -138,10 +138,17 @@ def _rule_link_deductions(
     payment. Refunds that name nothing become orphan exceptions rather than being
     guessed onto the nearest payment of a similar size.
     """
+    # A refund names its payment by whichever handle the exporter used: Razorpay's
+    # API says payment_id ("pay_NW3X..."), a CSV export often says order_id
+    # ("ORD-88001"). Index BOTH so the link is found either way -- looking only at
+    # one made every Razorpay-shaped refund an orphan.
     payments_by_ref: dict[str, Entry] = {}
     for e in entries:
-        if e.source == "payment" and e.reference:
-            payments_by_ref.setdefault(e.reference.strip().lower(), e)
+        if e.source != "payment":
+            continue
+        for handle in (e.reference, e.id):
+            if handle:
+                payments_by_ref.setdefault(str(handle).strip().lower(), e)
 
     # refunds against the same payment must be summed, not compared individually:
     # 1000 refunded by 300 then 200 leaves 500 owed, and over-refunding is an error
@@ -356,7 +363,7 @@ def _rule_payment_to_settlement(
     # settlement at a time (see _assign_subsets)
     for s, subset in _assign_subsets(
         pending, window_units, target,
-        key=lambda u, _s=None: u.gross, max_k=6,
+        key=lambda u, anchor: u.gross_as_of(anchor.value_date), max_k=6,
         audit=audit, unresolved=unresolved,
     ):
         for u in subset:
@@ -438,7 +445,8 @@ def _rule_merged_bank_credit(
     pending = [b for b in pending if b.id not in done]
 
     for b, subset in _assign_subsets(
-        pending, window_units, lambda x: x.amount_paise, key=lambda u: u.net, max_k=4
+        pending, window_units, lambda x: x.amount_paise,
+        key=lambda u, _anchor: u.net, max_k=4
     ):
         if len(subset) < 2:
             continue
@@ -468,7 +476,31 @@ def _assign_subsets(
     # keyed by position in `pending` because Entry is a pydantic model (unhashable)
     cands: dict[int, list[tuple[_Unit, ...]]] = {}
     for i, anchor in enumerate(pending):
-        found = _all_subsets(window_units(anchor), target(anchor), key=key, max_k=max_k)
+        pool = window_units(anchor)
+        tgt = target(anchor)
+
+        # A single unit that matches exactly IS the answer, even if two of them
+        # do and we cannot tell which. Inventing a 4-way "split batch" to explain
+        # a payout whose real 1:1 counterpart is sitting right there is how three
+        # unrelated sales get fused into one group. Ambiguity between singles is
+        # a refusal, not a licence to go looking for arithmetic coincidences.
+        singles = [u for u in pool if key(u, anchor) == tgt]
+        if singles:
+            if audit is not None and len(singles) > 1:
+                involved = sorted({eid for u in singles for eid in u.ids})
+                if unresolved is not None:
+                    unresolved.update(involved)
+                audit.record(
+                    stage="structural", rule="ambiguous-single@v1", inputs=involved,
+                    outcome="exception", confidence=0.0,
+                    rationale=(
+                        f"{anchor.id} matches {len(singles)} different payment units "
+                        f"exactly; amounts alone cannot say which one it paid out"
+                    ),
+                )
+            continue
+
+        found = _all_subsets(pool, tgt, key=lambda u: key(u, anchor), max_k=max_k)
         if found:
             cands[i] = found
 
