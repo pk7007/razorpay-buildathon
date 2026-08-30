@@ -22,7 +22,7 @@ from .normalize import normalize
 from .reconcile import reconcile
 from .resolver import resolve
 
-_SOURCES = ("payment", "settlement", "bank", "ledger")
+_SOURCES = ("payment", "settlement", "bank", "ledger", "refund", "chargeback")
 
 
 def run_rows(

@@ -13,7 +13,8 @@ from itertools import combinations
 
 from .audit import AuditLog
 from .config import SETTINGS
-from .models import Entry, MatchGroup, Stage
+from .models import DEDUCTION_SOURCES, Entry, MatchGroup, Stage
+from .money import DEFAULT_CURRENCY, fmt
 
 _STAGE_RANK: dict[Stage, int] = {"deterministic": 0, "structural": 1, "heuristic": 2, "agent": 2}
 
@@ -58,6 +59,7 @@ def reconcile(
     unresolved: set[str] = set()
 
     _rule_exact_reference(entries, uf, tol)
+    _rule_link_deductions(entries, uf, by_id, audit)
     _rule_payment_to_settlement(entries, uf, by_id, tol, lag, audit, unresolved)
     _rule_merged_bank_credit(entries, uf, by_id, tol)
 
@@ -124,26 +126,106 @@ def _rule_exact_reference(entries: list[Entry], uf: _UF, tol: int) -> None:
                   f"shared reference {ref!r}, amounts equal within ₹{tol/100:.2f}")
 
 
+def _rule_link_deductions(
+    entries: list[Entry], uf: _UF, by_id: dict[str, Entry], audit: AuditLog
+) -> None:
+    """Attach every refund and chargeback to the payment it reduces.
+
+    This must run before the settlement rules. A payment of 1000 refunded by 300
+    settles as 700; if the refund is not attached first, the settlement identity
+    looks for 1000, fails, and a perfectly ordinary refunded sale is reported as
+    an exception. Linking is by explicit reference only -- a refund names its
+    payment. Refunds that name nothing become orphan exceptions rather than being
+    guessed onto the nearest payment of a similar size.
+    """
+    payments_by_ref: dict[str, Entry] = {}
+    for e in entries:
+        if e.source == "payment" and e.reference:
+            payments_by_ref.setdefault(e.reference.strip().lower(), e)
+
+    # refunds against the same payment must be summed, not compared individually:
+    # 1000 refunded by 300 then 200 leaves 500 owed, and over-refunding is an error
+    claimed: dict[str, int] = defaultdict(int)
+
+    for d in entries:
+        if d.source not in DEDUCTION_SOURCES:
+            continue
+        ref = (d.related_reference or "").strip().lower()
+        if not ref:
+            continue
+        payment = payments_by_ref.get(ref)
+        if payment is None:
+            continue
+        if payment.currency != d.currency:
+            audit.record(
+                stage="deterministic", rule="deduction-currency-mismatch@v1",
+                inputs=[d.id, payment.id], outcome="rejected", confidence=0.0,
+                rationale=(
+                    f"{d.source} {d.id} is in {d.currency} but payment {payment.id} "
+                    f"is in {payment.currency}; refusing to net across currencies"
+                ),
+            )
+            continue
+        claimed[payment.id] += d.amount_paise
+        kind = "refund" if d.source == "refund" else "chargeback"
+        uf.union(
+            d.id, payment.id, f"{kind}-to-payment@v1", "deterministic", 1.0,
+            f"{kind} {fmt(d.amount_paise, d.currency)} against payment {payment.id} "
+            f"({fmt(payment.amount_paise, payment.currency)}), leaving "
+            f"{fmt(payment.amount_paise - claimed[payment.id], payment.currency)} owed",
+        )
+
+    for pid, total in claimed.items():
+        payment = by_id[pid]
+        if total > payment.amount_paise:
+            audit.record(
+                stage="deterministic", rule="over-refund@v1", inputs=[pid],
+                outcome="exception", confidence=0.95,
+                rationale=(
+                    f"deductions of {fmt(total, payment.currency)} exceed payment "
+                    f"{pid} of {fmt(payment.amount_paise, payment.currency)} by "
+                    f"{fmt(total - payment.amount_paise, payment.currency)}"
+                ),
+            )
+
+
 class _Unit:
     """A current connected component, viewed as one atomic reconciliation unit."""
 
-    __slots__ = ("root", "ids", "gross", "net", "dates", "by_source", "consumed")
+    __slots__ = ("root", "ids", "gross", "net", "dates", "by_source", "consumed",
+                 "currency", "deductions", "base_gross", "deduction_events")
 
     def __init__(self, root: str, members: list[Entry]) -> None:
         self.root = root
         self.ids = [e.id for e in members]
+        self.currency = members[0].currency if members else DEFAULT_CURRENCY
         # payment and ledger both carry the GROSS sale amount -> take one side, not the sum
         pay = sum(e.amount_paise for e in members if e.source == "payment")
         ldg = sum(e.amount_paise for e in members if e.source == "ledger")
         setl = sum(e.amount_paise for e in members if e.source == "settlement")
         bank = sum(e.amount_paise for e in members if e.source == "bank")
-        self.gross = pay or ldg or max((e.amount_paise for e in members), default=0)
+        # Refunds and chargebacks reduce what the merchant is owed -- but only
+        # the ones that had already happened when the payout was cut. A refund
+        # raised three weeks AFTER the payout cannot retroactively shrink it, and
+        # a chargeback still under review has not been clawed back at all.
+        self.deduction_events = [
+            (e.value_date, e.amount_paise)
+            for e in members
+            if e.source in DEDUCTION_SOURCES and _deduction_is_settled(e)
+        ]
+        self.deductions = sum(a for _, a in self.deduction_events)
+        self.base_gross = pay or ldg or max((e.amount_paise for e in members), default=0)
+        self.gross = self.base_gross - self.deductions
         self.net = setl or bank or max((e.amount_paise for e in members), default=0)
         self.dates = {e.value_date for e in members}
         self.by_source: dict[str, set[date]] = defaultdict(set)
         for e in members:
             self.by_source[e.source].add(e.value_date)
         self.consumed = False
+
+    def gross_as_of(self, when: date) -> int:
+        """Gross owed at ``when``: base less only the deductions that had landed."""
+        return self.base_gross - sum(a for d, a in self.deduction_events if d <= when)
 
     def has(self, source: str) -> bool:
         return source in self.by_source
@@ -154,6 +236,18 @@ class _Unit:
         before its own settlement, so matching on it lets a unit slip into the
         wrong payout window)."""
         return self.by_source.get(source, self.dates)
+
+
+def _deduction_is_settled(e: Entry) -> bool:
+    """Does this deduction actually reduce a payout?
+
+    A refund does. A chargeback only does once it is lost or accepted -- while it
+    is open or under review the money is still with the merchant, and treating it
+    as deducted would report every live dispute as a shortfall.
+    """
+    if e.source == "refund":
+        return True
+    return e.dispute_status in (None, "lost", "accepted")
 
 
 def _component_sources(uf: _UF, by_id: dict[str, Entry]) -> dict[str, set[str]]:
@@ -222,10 +316,19 @@ def _rule_payment_to_settlement(
     idx = _index_units_by_date(units, "payment")
 
     def target(s: Entry) -> int:
-        return s.amount_paise + s.fee_paise + s.tax_paise
+        """Gross this payout represents, from its OWN reported components.
+
+        No global fee rate is assumed: whatever the settlement reports as fee,
+        tax and TDS is added back to its net. A merchant on a negotiated rate,
+        a zero-MDR UPI payout and a TDS-withheld payout all reconcile with the
+        same code path.
+        """
+        return s.amount_paise + s.fee_paise + s.tax_paise + (s.tds_paise or 0)
 
     def window_units(s: Entry) -> list[_Unit]:
-        return _near_dates(idx, s.value_date - timedelta(days=lag), 1)
+        # never match across currencies: 1000 USD is not 1000 INR
+        return [u for u in _near_dates(idx, s.value_date - timedelta(days=lag), 1)
+                if u.currency == s.currency]
 
     # `done` holds ids, not Entry objects: list.remove() on a pydantic model is an
     # O(n) scan of __eq__ calls and dominated the profile at 20k records
@@ -252,12 +355,42 @@ def _rule_payment_to_settlement(
     # pass 2: split batches, resolved as a constraint problem rather than one
     # settlement at a time (see _assign_subsets)
     for s, subset in _assign_subsets(
-        pending, window_units, target, key=lambda u: u.gross, max_k=6,
+        pending, window_units, target,
+        key=lambda u, _s=None: u.gross, max_k=6,
         audit=audit, unresolved=unresolved,
     ):
         for u in subset:
             _link_unit(uf, u, s, "split-settlement@v1", 0.92, _p2s_why(s, u, len(subset)))
             u.consumed = True
+        if s in pending:
+            pending.remove(s)
+
+    # pass 3: late payouts. Holds, bank holidays, weekly settlement cycles and
+    # cross-period payouts all break the T+lag window -- a July sale paid out in
+    # August is the single most common real-world carry-forward. The window
+    # widens but the bar rises: the amount must match exactly and be unique, so
+    # precision is not traded away for reach.
+    for s in list(pending):
+        cands = [
+            u for u in units
+            if not u.consumed
+            and u.currency == s.currency
+            and u.gross_as_of(s.value_date) == target(s)
+            and all(d <= s.value_date for d in u.dates_of("payment"))
+            and min((s.value_date - d).days for d in u.dates_of("payment"))
+            <= SETTINGS.max_payout_lag_days
+        ]
+        if len(cands) == 1:
+            u = cands[0]
+            lag_days = min((s.value_date - d).days for d in u.dates_of("payment"))
+            _link_unit(
+                uf, u, s, "late-payout@v1", 0.9,
+                f"payout {fmt(s.amount_paise, s.currency)} on {s.value_date} settles "
+                f"gross {fmt(target(s), s.currency)} from T+{lag_days} "
+                f"(beyond the usual T+{lag}); exact and unique amount match",
+            )
+            u.consumed = True
+            pending.remove(s)
 
 
 def _rule_merged_bank_credit(
@@ -283,7 +416,8 @@ def _rule_merged_bank_credit(
 
     def window_units(b: Entry) -> list[_Unit]:
         root = uf.find(b.id)
-        return [u for u in _near_dates(idx, b.value_date, 1) if uf.find(u.root) != root]
+        return [u for u in _near_dates(idx, b.value_date, 1)
+                if uf.find(u.root) != root and u.currency == b.currency]
 
     pending = list(banks)
     done: set[str] = set()

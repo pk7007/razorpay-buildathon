@@ -8,6 +8,7 @@ import re
 from datetime import date, datetime
 
 from .models import Entry, Source
+from .money import normalize_code
 
 _UTR_RE = re.compile(r"\b(UTR\d{8,})\b", re.I)
 _ORD_RE = re.compile(r"\b(ORD\d{5,})\b", re.I)
@@ -76,6 +77,8 @@ def normalize(source: Source, rows: list[dict]) -> list[Entry]:
                     source=source,
                     amount_paise=_to_paise(r.get("amount", r.get("amount_paise", 0))),
                     value_date=_to_date(r.get("created_at") or r.get("date")),
+                    currency=normalize_code(r.get("currency")),
+                    method=_clean_ref(r.get("method")),
                     reference=_clean_ref(r.get("order_id"), r.get("rrn"), r.get("id")),
                     narration=_clean_ref(r.get("method"), r.get("description"), r.get("status")),
                     raw=r,
@@ -90,10 +93,19 @@ def normalize(source: Source, rows: list[dict]) -> list[Entry]:
                     value_date=_to_date(
                         r.get("settled_at") or r.get("created_at") or r.get("date")
                     ),
+                    currency=normalize_code(r.get("currency")),
                     reference=_clean_ref(r.get("utr"), r.get("id")),
                     narration="settlement payout",
-                    fee_paise=_to_paise(r.get("fees", 0)),
+                    fee_paise=_to_paise(r.get("fees", r.get("fee", 0))),
                     tax_paise=_to_paise(r.get("tax", 0)),
+                    tds_paise=(
+                        _to_paise(r["tds"]) if r.get("tds") not in (None, "") else None
+                    ),
+                    # the source reported its own components -> ACTUAL, never
+                    # overridden by a rate card
+                    fee_reported=any(
+                        r.get(k) not in (None, "") for k in ("fees", "fee", "tax")
+                    ),
                     raw=r,
                 )
             )
@@ -107,6 +119,7 @@ def normalize(source: Source, rows: list[dict]) -> list[Entry]:
                     id=_clean_ref(r.get("id")) or f"bank_{i}",
                     source=source,
                     amount_paise=amt,
+                    currency=normalize_code(r.get("currency")),
                     value_date=_to_date(r.get("value_date") or r.get("date")),
                     reference=_clean_ref(r.get("utr"), r.get("ref"))
                     or _ref_from_narration(narration),
@@ -120,6 +133,7 @@ def normalize(source: Source, rows: list[dict]) -> list[Entry]:
                     id=_clean_ref(r.get("id")) or f"ldgr_{i}",
                     source=source,
                     amount_paise=_to_paise(r.get("amount", 0)),
+                    currency=normalize_code(r.get("currency")),
                     value_date=_to_date(r.get("date")),
                     reference=_clean_ref(r.get("external_ref"), r.get("ref"))
                     or _ref_from_narration(r.get("memo")),
@@ -127,6 +141,44 @@ def normalize(source: Source, rows: list[dict]) -> list[Entry]:
                     raw=r,
                 )
             )
+        elif source in ("refund", "chargeback"):
+            # a deduction names the payment it reduces; that link is the ONLY
+            # thing used to attach it, so it is preserved exactly
+            related = _clean_ref(
+                r.get("payment_id"), r.get("order_id"), r.get("related_reference")
+            )
+            status = _clean_ref(r.get("status"))
+            out.append(
+                Entry(
+                    id=_clean_ref(r.get("id")) or f"{source}_{i}",
+                    source=source,
+                    amount_paise=abs(_to_paise(r.get("amount", 0))),
+                    currency=normalize_code(r.get("currency")),
+                    value_date=_to_date(
+                        r.get("created_at") or r.get("date") or r.get("value_date")
+                    ),
+                    reference=_clean_ref(r.get("id")),
+                    related_reference=related,
+                    narration=f"{source} {status or ''}".strip(),
+                    dispute_status=_dispute_status(status) if source == "chargeback" else None,
+                    raw=r,
+                )
+            )
         else:  # pragma: no cover
             raise ValueError(f"unknown source {source}")
     return out
+
+
+_DISPUTE_ALIASES = {
+    "open": "open", "created": "open", "initiated": "open",
+    "under_review": "under_review", "disputed": "under_review", "contested": "under_review",
+    "won": "won", "reversed": "won",
+    "lost": "lost", "chargeback": "lost", "debited": "lost",
+    "accepted": "accepted", "closed": "accepted",
+}
+
+
+def _dispute_status(raw: str | None):
+    if not raw:
+        return None
+    return _DISPUTE_ALIASES.get(str(raw).strip().lower().replace(" ", "_"))

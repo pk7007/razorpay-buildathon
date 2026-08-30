@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from .audit import AuditLog
 from .config import SETTINGS
 from .models import Entry, ExceptionCategory, MatchGroup, ReconException
+from .money import fmt
 
 _ACTION: dict[ExceptionCategory, str] = {
     "missing_in_bank": "Chase the payout — money is booked but never reached the bank.",
@@ -22,6 +23,14 @@ _ACTION: dict[ExceptionCategory, str] = {
     "duplicate": "Void one entry — the same amount is recorded twice.",
     "fx_or_adjustment": "Book the FX / manual adjustment difference.",
     "amount_mismatch": "A counterpart exists but the amounts do not reconcile — investigate.",
+    "orphan_refund": "Locate the original payment — this refund names one that is "
+                     "not in the batch. It may be in an earlier period.",
+    "orphan_chargeback": "Locate the disputed payment — it is not in this batch, "
+                         "likely from an earlier period.",
+    "over_refunded": "Refunds exceed the payment they reduce — a data error. Verify "
+                     "the refund records before settling.",
+    "currency_mismatch": "A counterpart exists in a different currency — confirm the "
+                         "FX rate and book the conversion explicitly.",
     "unknown": "Manual review — no structural match found.",
 }
 
@@ -126,6 +135,18 @@ def _categorize(
     e: Entry, idx: _Indices, tol: int
 ) -> tuple[ExceptionCategory, float, str]:
     amt = e.amount_paise
+
+    # a deduction that reached this point never found its payment
+    if e.source in ("refund", "chargeback"):
+        cat: ExceptionCategory = (
+            "orphan_refund" if e.source == "refund" else "orphan_chargeback"
+        )
+        named = f" naming payment {e.related_reference}" if e.related_reference else ""
+        return (
+            cat, 0.85,
+            f"{e.source} of {fmt(amt, e.currency)} on {e.value_date}{named}, but no "
+            f"such payment is in this batch — it is most likely in an earlier period",
+        )
 
     if e.source == "bank" and amt > 0:
         # same UTR as a settlement but amount short -> a deduction happened

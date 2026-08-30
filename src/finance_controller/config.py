@@ -40,6 +40,9 @@ class Settings:
     amount_tolerance_paise: int = _int("AMOUNT_TOLERANCE_PAISE", 100)   # 1.00 rupee
     date_tolerance_days: int = _int("DATE_TOLERANCE_DAYS", 3)
     settlement_lag_days: int = _int("SETTLEMENT_LAG_DAYS", 2)           # Razorpay T+2
+    # payouts can be held, batched weekly, or cross a period boundary; beyond
+    # this many days a match needs more than an amount to be believable
+    max_payout_lag_days: int = _int("MAX_PAYOUT_LAG_DAYS", 60)
 
     # Minimum confidence to accept a resolver-proposed match group.
     resolver_accept_threshold: float = _float("RESOLVER_ACCEPT_THRESHOLD", 0.72)
