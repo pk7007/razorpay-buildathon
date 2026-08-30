@@ -4,7 +4,7 @@
 
 Built for the **[Razorpay AI Buildathon](https://razorpay.com/buildathon/) — Track 4: AI Finance Controller**.
 
-Python 3.11 · FastAPI · SQLite · MIT · 216 tests
+Python 3.11 · FastAPI · SQLite · MIT · 258 tests
 
 | held-out precision | held-out recall | ₹ in wrong groups | throughput | replay |
 | --- | --- | --- | --- | --- |
@@ -282,7 +282,7 @@ razorpay-buildathon/
 ├── web/                        buildless dashboard + worklist (html/css/js)
 ├── data/datasets/              3 benchmark datasets + answer keys
 ├── scripts/                    CLI entry point, dataset generator
-├── tests/                      216 tests
+├── tests/                      258 tests
 ├── docs/                       architecture, metrics, api, dev, deploy, demo, pitch
 ├── .github/workflows/ci.yml    lint · tests · reproducibility · docker
 ├── Dockerfile · render.yaml · Procfile
@@ -321,7 +321,7 @@ cp .env.example .env
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | switches the residual resolver from heuristic to LLM | *(unset → heuristic)* |
+| `ANTHROPIC_API_KEY` | switches the residual resolver from heuristic to LLM. See [`docs/LLM.md`](docs/LLM.md) | *(unset → heuristic)* |
 | `LLM_MODEL` | model id | `claude-sonnet-5` |
 | `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | bound the model call | `20` / `2` |
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | **test mode only** — live pull. A non-`rzp_test_` key is refused. See [`docs/RAZORPAY.md`](docs/RAZORPAY.md) | *(unset)* |
@@ -349,7 +349,7 @@ The CLI writes `reconciliation.json`, `exceptions.csv`, `audit.jsonl` and
 ## Testing
 
 ```bash
-python -m pytest -q              # 216 tests
+python -m pytest -q              # 258 tests
 python -m pytest -q -m slow      # + throughput benchmark
 python -m ruff check .           # lint
 ```
@@ -438,8 +438,12 @@ Demo script: [`docs/DEMO.md`](docs/DEMO.md) · Pitch outline: [`docs/PITCH.md`](
 Stated plainly rather than buried:
 
 - The **LLM path has not been run against the live API** (no key in the build
-  environment). Its contract is covered by mocked tests; treat LLM numbers as
-  unverified until a key is added.
+  environment). The whole branch — bounds, cost accounting, refusal of
+  hallucinated ids and non-reconciling amounts, every failure mode — is exercised
+  against a stand-in for the SDK in `tests/test_llm_live.py`, and
+  `python scripts/verify_llm.py` proves it for real in one command once a key
+  exists. **Every number published here was produced with the LLM switched off.**
+  See [`docs/LLM.md`](docs/LLM.md).
 - The **Razorpay pull has not been run against a live test-mode account** (no
   credentials in the build environment). The full path — guards, epoch parsing,
   paise handling, refund linkage, failure modes — is exercised against a stand-in

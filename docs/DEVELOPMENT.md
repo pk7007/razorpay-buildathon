@@ -37,7 +37,7 @@ python scripts/run_reconciliation.py --benchmark     # throughput
 ## Tests
 
 ```bash
-python -m pytest -q              # 93 tests
+python -m pytest -q              # 258 tests
 python -m pytest -q -m slow      # + the throughput benchmark
 python -m ruff check .           # lint
 python -m ruff check --fix .
@@ -52,6 +52,8 @@ What the suites cover:
 | `test_synth.py` | the benchmark generator is deterministic and self-consistent |
 | `test_api.py` | endpoint contracts and every error path |
 | `test_resolver.py` | the LLM contract under a mocked model, including prompt injection |
+| `test_llm_live.py` | the live model branch: bounds, cost accounting, blast radius, every failure mode |
+| `test_razorpay_live.py` | the live Razorpay branch: guards, epoch/paise parsing, failure modes |
 | `test_security.py` | path traversal, error leakage, resource limits, headers |
 
 ## The rule that matters
