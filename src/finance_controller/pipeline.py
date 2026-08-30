@@ -39,6 +39,7 @@ def run_rows(
     entries: list[Entry] = []
     for source in _SOURCES:
         entries.extend(normalize(source, rows_by_source.get(source, []) or []))
+    entries = _disambiguate_ids(entries)
     by_id = {e.id: e for e in entries}
 
     groups, residual, ambiguous_ids = reconcile(entries, audit)
@@ -100,6 +101,24 @@ def run_rows(
         metrics=metrics,
         resolver_mode="llm" if (SETTINGS.has_llm and usage.get("llm_calls")) else "heuristic",
     )
+
+
+def _disambiguate_ids(entries: list[Entry]) -> list[Entry]:
+    """Make every entry id unique within a run.
+
+    Re-exported statements routinely repeat an id, and two rows sharing one would
+    silently collapse into a single entry -- which then trips the conservation
+    assertion and fails the whole run. Each repeat gets a ``#n`` suffix so both
+    rows survive, stay individually traceable, and can be reported as the
+    duplicates they are rather than taking the batch down.
+    """
+    seen: dict[str, int] = {}
+    out: list[Entry] = []
+    for e in entries:
+        n = seen.get(e.id, 0) + 1
+        seen[e.id] = n
+        out.append(e if n == 1 else e.model_copy(update={"id": f"{e.id}#{n}"}))
+    return out
 
 
 def run_dir(input_dir: str | Path, labels_path: str | Path | None = None) -> ReconResult:

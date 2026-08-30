@@ -1,14 +1,14 @@
 # AI Finance Controller
 
-**Four-way settlement reconciliation that closes a merchant's month-end loop, proves its own accuracy on data it has never seen, and tells you exactly how much money to go chase.**
+**Four-way settlement reconciliation that closes a merchant's month-end loop, proves its own accuracy on data it has never seen, remembers the work between runs, and tells you exactly how much money to go chase.**
 
 Built for the **[Razorpay AI Buildathon](https://razorpay.com/buildathon/) — Track 4: AI Finance Controller**.
 
-Python 3.11 · FastAPI · MIT · 93 tests
+Python 3.11 · FastAPI · SQLite · MIT · 216 tests
 
 | held-out precision | held-out recall | ₹ in wrong groups | throughput | replay |
 | --- | --- | --- | --- | --- |
-| **1.0000** | **0.9928** | **₹0** | **13,527 rec/s** | stable |
+| **1.0000** | **0.9928** | **₹0** | **22,609 rec/s** | stable |
 
 ---
 
@@ -26,7 +26,7 @@ Every month-end close, a finance team reconciles four records that never line up
 | Source | What it says |
 | --- | --- |
 | **Payments** (gateway) | gross captures, refunds |
-| **Settlements** (payout) | net paid out = gross − fee − 18% GST, on a T+2 cycle |
+| **Settlements** (payout) | net = gross − fee − tax − TDS − refunds − chargebacks |
 | **Bank statement** | what actually hit the current account |
 | **Ledger / books** | what accounting *thinks* happened |
 
@@ -43,10 +43,16 @@ own this workflow.
 
 A **deterministic-first, LLM-last, conservation-checked** reconciliation agent.
 
-Reconciliation is mostly exact arithmetic, so exact arithmetic does the work:
-`Σ payment gross == settlement net + fee + GST` on the T+2 date, and
-`bank credit == Σ settlement net`. An LLM is only allowed near the small
-ambiguous tail those identities cannot reach — and even then its answer is
+Reconciliation is mostly exact arithmetic, so exact arithmetic does the work.
+The settlement identity is **configured, not assumed**:
+
+```
+expected_net = gross - fee - tax - TDS - refunds - chargebacks + adjustments
+```
+
+The fee comes from the settlement itself when the source reports it, and from a
+per-method rate card only when it does not. An LLM is allowed near the small
+ambiguous tail these identities cannot reach — and even then its answer is
 checked before it counts.
 
 > **An LLM should never decide where your money went. It should only make a
@@ -54,19 +60,44 @@ checked before it counts.
 
 ## Key features
 
+**Reconciliation**
 - **Four-way matching** — union-find over accounting identities, handling split
   batches (many payments → one payout) and merged payouts (one credit → many
   settlements) via bounded, unique subset-sum with constraint propagation
-- **Refuses to guess** — when two candidate assignments are equally valid, it
-  declines, records why, and files an `ambiguous_split` rather than picking one
-- **Honest exception queue** — every unresolved row gets a category, a
-  confidence, a plain-English reason and a suggested action
-- **Replayable audit trail** — one record per decision, with the arithmetic in
-  it; a fingerprint is re-checked on every run
+- **No fee rate is assumed** — configurable rate cards per payment method
+  (percent, flat, or both), plus TDS. Reported fees always beat the rate card and
+  are marked `actual`; inferred ones are marked `estimated` and never presented
+  as measured
+- **Refunds, partial refunds, multiple refunds, chargebacks and disputes** as
+  first-class financial events, not unmatched noise. A ₹1,000 sale refunded ₹300
+  settles as ₹700; a refund raised *after* the payout does not retroactively
+  shrink it; an open dispute is not treated as clawed back
+- **Every amount carries a currency** — ₹1,000 can never match $1,000
+- **Refuses to guess** — when two assignments are equally valid it declines,
+  records why, and files an `ambiguous_split`
+
+**Workflow (this is the part that makes it a product)**
+- **Persistent exception queue** — an unmatched item becomes a piece of work with
+  a status, priority, assignee, notes and full history
+- **Carry-forward** — a July sale with no payout stays open; when the August
+  payout arrives it is **auto-resolved**, citing the run that explains it
+- **Idempotent** — re-running the same batch updates the queue rather than
+  duplicating it, and human work on an item survives untouched
+- **State machine** — `open → investigating → resolved / written_off`, with
+  illegal transitions refused by the API
+
+**Ingestion**
+- **Universal column mapping** — verified against HDFC, ICICI, SBI, Axis and
+  Kotak header layouts; split debit/credit columns folded into one signed amount
+- **Preview before you commit** — see the proposed mapping and row-level quality
+  before running anything
+- **Partial acceptance** — bad rows are quarantined with the row number and
+  reason; good rows still reconcile
+
+**Evidence**
+- **Replayable audit trail** — one record per decision, with the arithmetic in it
 - **Measures itself on held-out data** — five seeds the rules have never seen
-- **Money summary in ₹** — reconciled / in-transit / **recoverable** / unrecorded
 - **Works with the AI switched off** — no key ⇒ deterministic heuristic resolver
-- **Batch upload or bundled benchmarks**, dashboard and CLI
 
 ## Results
 
@@ -96,13 +127,12 @@ intended behaviour — written up in full in [`docs/METRICS.md`](docs/METRICS.md
 
 | records | time | records/sec |
 | --- | --- | --- |
-| 1,126 | 0.08 s | 13,527 |
-| 5,840 | 0.52 s | 11,194 |
-| 23,565 | 2.22 s | 10,622 |
-| 58,908 | 6.56 s | 8,976 |
+| 1,126 | 0.05 s | 22,609 |
+| 5,840 | 0.33 s | 17,971 |
+| 23,565 | 1.74 s | 13,524 |
+| 58,908 | 4.14 s | 14,244 |
 
-Single process, no database. Across a 50× range throughput degrades 1.5× —
-effectively linear.
+Single process. Across a 50× range throughput degrades 1.6× — effectively linear.
 
 **Reproduce every number above:**
 
@@ -125,15 +155,19 @@ flowchart LR
 
   F --> ING[ingest]
   RZP -.optional.-> ING
-  ING --> NRM["normalize<br/><i>integer paise · IST dates</i>"]
+  ING --> MAP["map columns<br/><i>HDFC · ICICI · SBI · Axis…</i>"]
+  MAP --> QC["validate<br/><i>quarantine bad rows</i>"]
+  QC --> NRM["normalize<br/><i>minor units · currency · IST</i>"]
   NRM --> REC
 
   subgraph REC["reconcile — deterministic + structural"]
     direction TB
+    R0["attach refunds &<br/>chargebacks to payments"]
     R1["exact reference<br/>UTR / order id"]
-    R2["Σ gross == net + fee + GST<br/>T+2"]
+    R2["Σ gross == net + fee<br/>+ tax + TDS, T+2"]
     R3["bank credit == Σ settlement net"]
-    R1 --> R2 --> R3
+    R4["late payout<br/><i>cross-period</i>"]
+    R0 --> R1 --> R2 --> R3 --> R4
   end
 
   REC -->|matched| GRP[match groups]
@@ -152,21 +186,42 @@ flowchart LR
   GRP --> OUT
   EXC --> OUT
   OUT["ReconResult<br/><i>conservation asserted</i>"] --> API[FastAPI]
-  API --> UI[dashboard]
-  API --> CLI[CLI]
   OUT --> AUD["audit trail<br/>+ replay fingerprint"]
   OUT --> MET["metrics<br/>+ ₹ summary"]
+  OUT --> STORE
+
+  subgraph STORE["persistent worklist — SQLite"]
+    direction TB
+    S1["exceptions<br/><i>keyed by fingerprint</i>"]
+    S2["status · assignee · notes"]
+    S3["carry-forward<br/><i>auto-resolve when explained</i>"]
+    S1 --> S2 --> S3
+  end
+
+  API --> UI["dashboard<br/>+ worklist"]
+  API --> CLI[CLI]
+  STORE --> API
 ```
 
 Full write-up: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-### No database, no auth
+### Stateless engine, stateful workflow
 
-Both absent **by decision, not omission**. A reconciliation is a pure function of
-the four batches it is handed. Persisting results would add a breach surface and
-a consistency problem while adding nothing to accuracy — so the run is in-memory
-and the response is the only copy. That also makes deployment stateless and
-horizontally trivial.
+The split is deliberate, and it is the core architectural idea:
+
+- **Reconciliation is a pure function** of the batches it is handed. Same input,
+  same output, verified by a replay fingerprint on every run. It touches no
+  database.
+- **Reconciliation *work* is not.** An item unmatched in July matches in August;
+  a team works a queue over days. So the *outcome* is persisted — keyed by a
+  stable fingerprint of the entry, which is what makes re-running idempotent.
+
+SQLite, because it needs no service, ships inside the container, and a merchant's
+reconciliation history is measured in megabytes.
+
+There is no authentication, because there is nothing yet to protect: no accounts,
+no tenancy, no third-party data. That changes the moment it touches a real
+merchant's books, and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) says so.
 
 ### Where the AI is, and where it is not
 
@@ -203,23 +258,31 @@ entry. It contributes ~2% of matches, and it is not in the critical path:
 ```
 razorpay-buildathon/
 ├── src/finance_controller/     the engine and the service
-│   ├── api.py                  FastAPI routes, middleware, limits
+│   ├── api.py                  reconciliation routes, middleware, limits
+│   ├── api_queue.py            workflow routes: queue, runs, ingest preview
 │   ├── pipeline.py             wires the stages; asserts conservation
 │   ├── reconcile.py            deterministic + structural matching
 │   ├── resolver.py             LLM / heuristic residual resolver
+│   ├── store.py                SQLite: runs, exception queue, history
+│   ├── money.py                currency, minor units, provenance
+│   ├── fees.py                 rate cards, TDS, the settlement equation
+│   ├── mapping.py              universal bank-CSV column detection
+│   ├── quality.py              ingestion validation, partial acceptance
 │   ├── exceptions.py           categorises what could not be matched
 │   ├── metrics.py              scoring, group status, ₹ summary
 │   ├── evaluate.py             held-out split + throughput benchmark
 │   ├── synth.py                benchmark generator + ground truth
-│   ├── ingest.py               files, bundled datasets, Razorpay API
+│   ├── scenarios.py            15 hand-checked financial situations
+│   ├── razorpay_source.py      test-mode pull + labelled fixtures
+│   ├── ingest.py               files, bundled datasets
 │   ├── normalize.py            raw rows -> canonical Entry
 │   ├── models.py               the canonical schema
 │   ├── audit.py                the decision log
 │   └── config.py               env + tolerances
-├── web/                        buildless dashboard (html/css/js)
+├── web/                        buildless dashboard + worklist (html/css/js)
 ├── data/datasets/              3 benchmark datasets + answer keys
 ├── scripts/                    CLI entry point, dataset generator
-├── tests/                      93 tests
+├── tests/                      216 tests
 ├── docs/                       architecture, metrics, api, dev, deploy, demo, pitch
 ├── .github/workflows/ci.yml    lint · tests · reproducibility · docker
 ├── Dockerfile · render.yaml · Procfile
@@ -286,15 +349,18 @@ The CLI writes `reconciliation.json`, `exceptions.csv`, `audit.jsonl` and
 ## Testing
 
 ```bash
-python -m pytest -q              # 93 tests
+python -m pytest -q              # 216 tests
 python -m pytest -q -m slow      # + throughput benchmark
 python -m ruff check .           # lint
 ```
 
-Covering engine correctness, the conservation invariant, held-out
-generalisation thresholds, generator determinism, every API error path, the LLM
-contract under a mocked model (including prompt injection), and security
-regressions (path traversal, error leakage, resource limits).
+Covering engine correctness, the conservation invariant, held-out generalisation
+thresholds, generator determinism, every API error path, the LLM contract under a
+mocked model (including prompt injection), security regressions, **15 hand-checked
+financial scenarios** (refunds, TDS, chargebacks, carry-forward, multi-currency),
+**the persistence workflow** (idempotency, state machine, auto-resolution), **real
+bank header layouts**, and **adversarial input** — every case found by trying to
+break the running system is kept as a test.
 
 ## Production build
 
@@ -321,6 +387,12 @@ Procfile host. Full guide, scaling notes and the pre-production checklist:
 | `POST` | `/api/reconcile/upload` | reconcile your own CSV/JSON exports |
 | `GET` | `/api/evaluation` | dev vs held-out accuracy, served live |
 | `GET` | `/api/benchmark` | throughput at increasing batch sizes |
+| `POST` | `/api/ingest/preview` | proposed column mapping + row quality, before running |
+| `GET` | `/api/exceptions` | the persistent worklist — filter, sort, search |
+| `PATCH` | `/api/exceptions/{id}` | change status / assignee (409 on an illegal move) |
+| `POST` | `/api/exceptions/{id}/notes` | annotate an item |
+| `GET` | `/api/runs` | reconciliation history |
+| `POST` | `/api/reconcile/razorpay` | Razorpay test-mode, else labelled fixtures |
 
 ```bash
 curl -X POST http://localhost:8000/api/reconcile \
