@@ -324,7 +324,7 @@ cp .env.example .env
 | `ANTHROPIC_API_KEY` | switches the residual resolver from heuristic to LLM | *(unset → heuristic)* |
 | `LLM_MODEL` | model id | `claude-sonnet-5` |
 | `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | bound the model call | `20` / `2` |
-| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | **test mode only** — live payment/settlement pull | *(unset)* |
+| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | **test mode only** — live pull. A non-`rzp_test_` key is refused. See [`docs/RAZORPAY.md`](docs/RAZORPAY.md) | *(unset)* |
 | `AMOUNT_TOLERANCE_PAISE` | cross-source rounding slack | `100` (₹1) |
 | `SETTLEMENT_LAG_DAYS` | payout cycle | `2` (T+2) |
 | `RESOLVER_ACCEPT_THRESHOLD` | minimum confidence to accept a resolver group | `0.72` |
@@ -440,6 +440,12 @@ Stated plainly rather than buried:
 - The **LLM path has not been run against the live API** (no key in the build
   environment). Its contract is covered by mocked tests; treat LLM numbers as
   unverified until a key is added.
+- The **Razorpay pull has not been run against a live test-mode account** (no
+  credentials in the build environment). The full path — guards, epoch parsing,
+  paise handling, refund linkage, failure modes — is exercised against a stand-in
+  for the SDK in `tests/test_razorpay_live.py`, and
+  `python scripts/verify_razorpay.py` proves it for real in one command once keys
+  exist. Until then the app reports its own data as `fixture`, never `live_test`.
 - The **Dockerfile has never been built locally** (Docker not installed) — CI
   builds and runs it on every push.
 - **FX-adjusted international settlements are not modelled.** They need the
