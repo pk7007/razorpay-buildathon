@@ -115,6 +115,19 @@ _REQUIRED: dict[str, tuple[str, ...]] = {
     "chargeback": ("amount", "date"),
 }
 
+# Fields where a documented convention can break a tie. A statement carrying both
+# "Value Date" and "Transaction Date" is normal, and the value date -- when the
+# money actually moved -- is the one reconciliation cares about.
+#
+# `amount` is deliberately NOT here. "Amount" and "Transaction Amount" on the
+# same file could be gross vs net, or amount vs fee; there is no convention that
+# settles it, and silently choosing would corrupt a run invisibly. That one stops
+# and asks.
+_CONVENTION_BREAKS_TIES = {"date"}
+
+# Fields dangerous enough that an unresolved tie must block the upload.
+_MUST_BE_UNAMBIGUOUS = {"amount", "date"}
+
 _NOISE = re.compile(r"[^a-z0-9]+")
 
 
@@ -196,14 +209,16 @@ def detect(source: Source, columns: list[str]) -> ColumnMapping:
         if not available:
             continue
         best_strength, best_pref, _ = available[0]
-        # a tie only counts as ambiguous when the aliases are equally preferred;
-        # "value date" beating "transaction date" is a convention, not a coin toss
-        contenders = [
-            c for st, pf, c in available if st == best_strength and pf == best_pref
-        ]
-        if best_strength >= 70 and len(contenders) > 1 and field_name in ("amount", "date"):
-            # only genuinely dangerous fields block; a second "remarks" column is
-            # not worth stopping a reconciliation over
+        if field_name in _CONVENTION_BREAKS_TIES:
+            # convention settles it, so only an exact alias tie is a real tie
+            contenders = [
+                c for st, pf, c in available if st == best_strength and pf == best_pref
+            ]
+        else:
+            contenders = [c for st, _pf, c in available if st == best_strength]
+        if best_strength >= 70 and len(contenders) > 1 and field_name in _MUST_BE_UNAMBIGUOUS:
+            # a second "remarks" column is not worth stopping a reconciliation
+            # over; a second candidate for `amount` absolutely is
             cm.ambiguous[field_name] = contenders
             continue
         cm.mapping[field_name] = contenders[0]

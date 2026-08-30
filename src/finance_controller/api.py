@@ -9,6 +9,8 @@ below is therefore stateless, and the response is the only copy of a result.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 import uuid
@@ -26,6 +28,7 @@ from .evaluate import benchmark, holdout_report
 from .ingest import available_datasets, parse_bytes
 from .models import ReconResult
 from .pipeline import run_bundled, run_rows
+from .store import Store
 from .synth import PROFILES
 
 _WEB = Path(__file__).resolve().parents[2] / "web"
@@ -38,6 +41,33 @@ log = logging.getLogger("finance_controller")
 
 # cached because both are pure and expensive enough to matter on a demo box
 _CACHE: dict[str, object] = {}
+
+_STORE: Store | None = None
+
+
+def get_store() -> Store:
+    """One process-wide store. SQLite handles the concurrency we have."""
+    global _STORE
+    if _STORE is None:
+        _STORE = Store()
+    return _STORE
+
+
+def _digest(rows: dict) -> str:
+    """Fingerprint of an input batch, so an identical re-upload is recognisable."""
+    return hashlib.sha256(
+        json.dumps(rows, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16]
+
+
+def _reconcile_and_record(rows: dict, dataset: str, **kw) -> ReconResult:
+    """Run the engine, then fold the outcome into the persistent queue."""
+    result = run_rows(rows, dataset=dataset, **kw)
+    try:
+        get_store().record_run(result, _digest(rows))
+    except Exception:  # noqa: BLE001 - a reporting failure must not lose the result
+        log.exception("could not persist run for %s", dataset)
+    return result
 
 
 @asynccontextmanager
@@ -194,7 +224,8 @@ def reconcile_dataset(payload: dict) -> ReconResult:
     name = (payload or {}).get("dataset")
     if not isinstance(name, str) or name not in available_datasets():
         raise HTTPException(404, f"unknown dataset {name!r}")
-    return run_bundled(name)
+    rows, labels, truth = _bundled_rows(name)
+    return _reconcile_and_record(rows, name, labels=labels or None, truth=truth or None)
 
 
 @app.post(
@@ -234,7 +265,7 @@ async def reconcile_upload(
         raise HTTPException(422, "no rows found in the uploaded files")
     if total > _MAX_ROWS:
         raise HTTPException(413, f"{total} rows exceeds the {_MAX_ROWS}-row limit")
-    return run_rows(rows, dataset="upload")
+    return _reconcile_and_record(rows, "upload")
 
 
 @app.get("/api/evaluation")
@@ -254,11 +285,30 @@ def throughput() -> dict:
     return _CACHE["benchmark"]  # type: ignore[return-value]
 
 
+def _bundled_rows(name: str):
+    """(rows, labels, truth) for a bundled benchmark dataset."""
+    from .ingest import load_dataset
+
+    return load_dataset(name)
+
+
 def _safe_name(name: str | None) -> str:
     """Never echo a raw client-supplied filename back into a response body."""
     if not name:
         return "file"
     return "".join(c for c in Path(name).name if c.isalnum() or c in "._-")[:60] or "file"
+
+
+from . import api_queue  # noqa: E402  (imported late: it wires back into this module)
+
+api_queue.wire(
+    store_getter=get_store,
+    reconcile_and_record=_reconcile_and_record,
+    parse_bytes=parse_bytes,
+    safe_name=_safe_name,
+    result_exclude=_RESULT_EXCLUDE,
+)
+app.include_router(api_queue.router)
 
 
 if _WEB.is_dir():

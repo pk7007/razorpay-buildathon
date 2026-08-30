@@ -70,3 +70,4 @@ out/
 Thumbs.db
 ehthumbs.db
 desktop.ini
+data/*.db*

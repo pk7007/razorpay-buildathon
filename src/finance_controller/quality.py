@@ -149,13 +149,14 @@ def validate(source: Source, rows: list[dict]) -> tuple[list[dict], QualityRepor
                 seen_sigs[sig] = n
 
         # --- deduction linkage --------------------------------------------
-        if source in ("refund", "chargeback"):
-            if not (row.get("payment_id") or row.get("order_id")
-                    or row.get("related_reference")):
-                problems.append(
-                    RowIssue(n, "payment_id",
-                             f"{source} does not name the payment it reduces", "warning")
-                )
+        names_a_payment = (
+            row.get("payment_id") or row.get("order_id") or row.get("related_reference")
+        )
+        if source in ("refund", "chargeback") and not names_a_payment:
+            problems.append(
+                RowIssue(n, "payment_id",
+                         f"{source} does not name the payment it reduces", "warning")
+            )
 
         rep.issues.extend(problems)
         if any(p.severity == "error" for p in problems):

@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .models import ReconResult
+from .models import ReconException, ReconResult
 
 SCHEMA_VERSION = 1
 
@@ -196,7 +196,7 @@ class Store:
         by_id = {e.id: e for e in result.entries}
         seen: set[str] = set()
 
-        for exc in result.exceptions:
+        for exc in _queue_items(result):
             entry = by_id.get(exc.entry_id)
             currency = entry.currency if entry else "INR"
             fp = fingerprint(exc.entry_id, exc.category, exc.amount_paise, currency)
@@ -466,6 +466,64 @@ def fingerprint(entry_id: str, category: str, amount_minor: int, currency: str) 
     amount correctly becomes a new exception rather than mutating an old one.
     """
     return f"{entry_id}|{category}|{amount_minor}|{currency}"
+
+
+# A group whose legs do not all tie is still unfinished work, even though its
+# members matched each other. "Booked but never paid out" is the single most
+# valuable thing in the queue -- it is recoverable money -- so it belongs on the
+# worklist, not only in the run report.
+_STATUS_TO_CATEGORY: dict[str, str] = {
+    "payout_overdue": "missing_in_bank",
+    "unbooked_payout": "missing_in_ledger",
+    "ambiguous_split": "split_settlement",
+    "partial": "unknown",
+}
+
+_STATUS_REASON: dict[str, str] = {
+    "payout_overdue": "booked and settled, but no bank credit has arrived",
+    "unbooked_payout": "money reached the bank but was never recorded in the ledger",
+    "ambiguous_split": "paid out in a batch that could not be attributed uniquely",
+    "partial": "some legs reconciled, others are missing with no clean explanation",
+}
+
+
+def _queue_items(result: ReconResult) -> list[ReconException]:
+    """Everything a human has to look at: unmatched entries AND groups whose
+    status says the loop is not actually closed."""
+    items = list(result.exceptions)
+    by_id = {e.id: e for e in result.entries}
+    for g in result.groups:
+        cat = _STATUS_TO_CATEGORY.get(g.status)
+        if not cat or not g.entry_ids:
+            continue
+        anchor = sorted(g.entry_ids)[0]
+        entry = by_id.get(anchor)
+        if entry is None:
+            continue
+        items.append(
+            ReconException(
+                entry_id=anchor,
+                source=entry.source,
+                amount_paise=g.amount_paise or entry.amount_paise,
+                value_date=entry.value_date,
+                category=cat,  # type: ignore[arg-type]
+                confidence=round(g.confidence, 4),
+                suggested_action=_ACTION_BY_STATUS.get(g.status, "Investigate."),
+                rationale=(
+                    f"{g.group_id} ({'+'.join(g.sources)}): "
+                    f"{_STATUS_REASON.get(g.status, g.status)}"
+                ),
+            )
+        )
+    return items
+
+
+_ACTION_BY_STATUS: dict[str, str] = {
+    "payout_overdue": "Chase the payout with the gateway — this is recoverable revenue.",
+    "unbooked_payout": "Book the journal entry for this credit.",
+    "ambiguous_split": "Use the settlement recon report to attribute this batch.",
+    "partial": "Investigate which leg is missing and why.",
+}
 
 
 def _priority_for(category: str, amount_minor: int) -> str:
