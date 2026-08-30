@@ -18,6 +18,10 @@
           <span class="tag">Razorpay AI Buildathon</span>
         </div>
       </div>
+      <nav class="viewnav" id="viewnav" aria-label="Sections">
+        <button data-view="reconcile" class="active">Reconcile</button>
+        <button data-view="queue">Worklist <span id="queue-badge" class="badge-sm"></span></button>
+      </nav>
       <div class="topbar-right">
         <span id="resolver-badge" class="badge" title="Residual matcher backend">resolver: …</span>
         <a class="ghost" href="/docs" target="_blank" rel="noopener">API</a>
@@ -115,10 +119,56 @@
     </section>
   </main>
 
+  <section id="queue-view" class="wrap hidden">
+    <div class="result-head">
+      <div>
+        <h2>Exception worklist</h2>
+        <p class="sub-tight" id="queue-sub">Items that survive between runs.</p>
+      </div>
+      <button class="ghost" id="queue-refresh">Refresh</button>
+    </div>
+
+    <div id="queue-kpis" class="kpis"></div>
+
+    <div class="filters" id="queue-filters">
+      <input id="q-search" class="inp" type="search" placeholder="Search id or reason…"
+             aria-label="Search the worklist" />
+      <select id="q-status" class="inp" aria-label="Filter by status">
+        <option value="">all statuses</option>
+        <option value="open" selected>open</option>
+        <option value="investigating">investigating</option>
+        <option value="resolved">resolved</option>
+        <option value="written_off">written off</option>
+      </select>
+      <select id="q-category" class="inp" aria-label="Filter by category">
+        <option value="">all categories</option>
+      </select>
+      <select id="q-sort" class="inp" aria-label="Sort by">
+        <option value="amount_minor">by amount</option>
+        <option value="value_date">by date</option>
+        <option value="times_seen">by age (runs seen)</option>
+        <option value="updated_at">by last touched</option>
+      </select>
+    </div>
+
+    <div id="queue-list" class="rows"></div>
+  </section>
+
+  <div id="drawer" class="drawer hidden" role="dialog" aria-modal="true"
+       aria-labelledby="drawer-title">
+    <div class="drawer-head">
+      <h3 id="drawer-title">Exception</h3>
+      <button class="ghost" id="drawer-close" aria-label="Close">✕</button>
+    </div>
+    <div id="drawer-body"></div>
+  </div>
+  <div id="scrim" class="scrim hidden"></div>
+
   <footer class="wrap foot">
     <span>Deterministic-first reconciliation · every match and exception is auditable.</span>
   </footer>
 
   <script src="/app.js"></script>
+  <script src="/queue.js"></script>
 </body>
 </html>

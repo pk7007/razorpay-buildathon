@@ -53,6 +53,7 @@ GroupStatus = Literal[
     "awaiting_payout",      # settlement raised, bank credit due within the payout cycle
     "payout_overdue",       # settlement raised, payout should have landed -> recoverable
     "unbooked_payout",      # settled to bank but never recorded in the ledger
+    "fully_refunded",       # refunds/chargebacks cancelled it out; no payout is due
     "ambiguous_split",      # part of a batch payout that could not be attributed uniquely
     "partial",              # some legs tied, others missing with no clean reason
 ]

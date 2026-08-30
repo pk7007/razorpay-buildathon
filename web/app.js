@@ -37,6 +37,7 @@ const STATUS_PILL = {
   payout_overdue: ["bad", "payout overdue"],
   unbooked_payout: ["warn", "unbooked payout"],
   ambiguous_split: ["warn", "ambiguous split"],
+  fully_refunded: ["neutral", "fully refunded"],
   partial: ["warn", "partial"],
 };
 const CAT_PILL = {

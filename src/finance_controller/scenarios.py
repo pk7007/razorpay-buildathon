@@ -147,7 +147,7 @@ def _negotiated_rate() -> Scenario:
 
 
 def _flat_fee() -> Scenario:
-    gross = 1_000_00
+    gross = 1_450_00
     fee = 3_00
     tax = round(fee * GST_BPS / 10_000)
     net = gross - fee - tax
@@ -166,7 +166,7 @@ def _flat_fee() -> Scenario:
 
 def _with_tds() -> Scenario:
     """194-O style withholding on top of fee and GST."""
-    gross = 10_000_00
+    gross = 12_500_00
     fee, tax = _fee_pair(gross, 200)
     tds = 100_00
     net = gross - fee - tax - tds
@@ -205,15 +205,15 @@ def _partial_refund() -> Scenario:
 
 
 def _multiple_refunds() -> Scenario:
-    """1000 paid, 300 + 200 refunded -> 500 settles."""
-    gross = 1_000_00
+    """Paid, then refunded twice -> the remainder settles."""
+    gross = 1_600_00
     settled_gross = gross - 300_00 - 200_00
     fee, tax = _fee_pair(settled_gross, 200)
     net = settled_gross - fee - tax
     return Scenario(
         key="multiple_refunds",
         title="Two refunds on one payment",
-        story="1,000 paid, refunded 300 then 200. 500 settles.",
+        story="1,600 paid, refunded 300 then 200. 1,100 settles.",
         payments=[_payment("pay_m1", "ORD7001", gross, 0, "card")],
         refunds=[_refund("rfnd_m1", "ORD7001", 300_00, 1),
                  _refund("rfnd_m2", "ORD7001", 200_00, 2)],
@@ -226,8 +226,8 @@ def _multiple_refunds() -> Scenario:
 
 
 def _full_refund() -> Scenario:
-    """1000 paid, 1000 refunded -> nothing settles at all."""
-    gross = 1_000_00
+    """Paid then fully refunded -> nothing settles at all."""
+    gross = 1_150_00
     return Scenario(
         key="full_refund",
         title="Full refund",
@@ -301,27 +301,27 @@ def _orphan_refund() -> Scenario:
 
 
 def _over_refund() -> Scenario:
-    gross = 1_000_00
+    gross = 1_350_00
     return Scenario(
         key="over_refund",
         title="Refunds exceed the payment",
-        story="1,000 paid but 1,200 refunded -- a data error that must be flagged.",
+        story="1,350 paid but 1,500 refunded -- a data error that must be flagged.",
         payments=[_payment("pay_or1", "ORDC001", gross, 0, "card")],
-        refunds=[_refund("rfnd_or1", "ORDC001", 700_00, 1),
-                 _refund("rfnd_or2", "ORDC001", 500_00, 2)],
+        refunds=[_refund("rfnd_or1", "ORDC001", 900_00, 1),
+                 _refund("rfnd_or2", "ORDC001", 600_00, 2)],
         ledger=[_ledger("ldgr_or1", gross, 0, "ORDC001")],
     )
 
 
 def _multi_currency() -> Scenario:
     """A USD payment and an INR payment of the identical numeric amount."""
-    amount = 1_000_00
+    amount = 2_750_00
     fee, tax = _fee_pair(amount, 300)
     net = amount - fee - tax
     return Scenario(
         key="multi_currency",
         title="USD and INR of the same number",
-        story="1,000 USD and 1,000 INR must never match each other.",
+        story="2,750 USD and 2,750 INR must never match each other.",
         payments=[
             _payment("pay_usd", "ORDD001", amount, 0, "card_intl", "USD"),
             _payment("pay_inr", "ORDD002", amount, 0, "card", "INR"),
@@ -350,15 +350,31 @@ def _carry_forward() -> Scenario:
     )
 
 
-ALL: dict[str, Scenario] = {
-    s.key: s
-    for s in [
-        _clean_card(), _zero_mdr_upi(), _negotiated_rate(), _flat_fee(), _with_tds(),
-        _partial_refund(), _multiple_refunds(), _full_refund(), _late_refund(),
-        _chargeback_lost(), _dispute_open(), _orphan_refund(), _over_refund(),
-        _multi_currency(), _carry_forward(),
-    ]
-}
+def _assert_distinct_grosses() -> None:
+    """Guard: two scenarios sharing a gross on a shared day would collide when
+    combined, and the resulting refusal would look like an engine fault rather
+    than the fixture coincidence it is."""
+    seen: dict[tuple, str] = {}
+    for sc in _BUILT:
+        for p in sc.payments:
+            key = (p["amount"], p["created_at"], p.get("currency", "INR"))
+            if key in seen and seen[key] != sc.key:
+                raise AssertionError(
+                    f"scenarios {seen[key]!r} and {sc.key!r} both have a "
+                    f"{p['amount']} payment on {p['created_at']} -- pick another amount"
+                )
+            seen[key] = sc.key
+
+
+_BUILT = [
+    _clean_card(), _zero_mdr_upi(), _negotiated_rate(), _flat_fee(), _with_tds(),
+    _partial_refund(), _multiple_refunds(), _full_refund(), _late_refund(),
+    _chargeback_lost(), _dispute_open(), _orphan_refund(), _over_refund(),
+    _multi_currency(), _carry_forward(),
+]
+_assert_distinct_grosses()
+
+ALL: dict[str, Scenario] = {s.key: s for s in _BUILT}
 
 
 def combined() -> dict:

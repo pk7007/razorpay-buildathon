@@ -96,6 +96,17 @@ def classify_group(
     latest = max((m.value_date for m in members), default=dataset_end)
     days_old = (dataset_end - latest).days
 
+    # Refunds and chargebacks can cancel a sale out entirely. Nothing is owed, so
+    # nothing is overdue -- reporting these as an outstanding payout would send
+    # someone chasing money that was never going to arrive.
+    gross = sum(m.amount_paise for m in members if m.source == "payment") or sum(
+        m.amount_paise for m in members if m.source == "ledger"
+    )
+    deducted = sum(m.amount_paise for m in members if m.source in ("refund", "chargeback"))
+    if has_book and "bank" not in srcs and deducted >= gross > 0:
+        g.status = "fully_refunded"
+        return
+
     if "bank" in srcs and has_book:
         g.status = "complete"
     elif "bank" in srcs and not has_book:
@@ -131,6 +142,8 @@ def money_summary(
 
     def total(*statuses: str) -> int:
         return sum(g.amount_paise for g in groups if g.status in statuses)
+
+    # a cancelled sale is neither reconciled money nor money to chase
 
     return MoneySummary(
         entries_total=len(entries),

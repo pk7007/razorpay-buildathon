@@ -70,8 +70,10 @@ def test_two_refunds_on_one_payment_both_deduct():
     sc, r = _run("multiple_refunds")
     assert r.exceptions == []
     ent = {e.id: e for e in r.entries}
+    gross = ent["pay_m1"].amount_paise
+    refunded = ent["rfnd_m1"].amount_paise + ent["rfnd_m2"].amount_paise
     s = ent["setl_m1"]
-    assert s.amount_paise + s.fee_paise + s.tax_paise == 1_000_00 - 300_00 - 200_00
+    assert s.amount_paise + s.fee_paise + s.tax_paise == gross - refunded
 
 
 def test_full_refund_means_nothing_settles():
@@ -146,7 +148,10 @@ def test_tds_is_part_of_the_identity():
     ent = {e.id: e for e in r.entries}
     s = ent["setl_t1"]
     assert s.tds_paise == 100_00
-    assert s.amount_paise + s.fee_paise + s.tax_paise + s.tds_paise == 10_000_00
+    assert (
+        s.amount_paise + s.fee_paise + s.tax_paise + s.tds_paise
+        == ent["pay_t1"].amount_paise
+    )
 
 
 def test_reported_fees_beat_the_rate_card():

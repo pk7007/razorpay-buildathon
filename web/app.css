@@ -242,3 +242,101 @@ a { color: var(--accent); }
   .bar-row { grid-template-columns: 78px 1fr 74px; }
   .bar-sub { display: none; }
 }
+
+/* ---------------------------------------------------------------- worklist */
+.viewnav { display: flex; gap: 2px; }
+.viewnav button {
+  font: inherit; font-size: .86rem; padding: 7px 14px; border-radius: 8px;
+  border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
+}
+.viewnav button:hover { background: var(--surface-2); }
+.viewnav button.active {
+  background: var(--accent-soft); color: var(--accent); font-weight: 600;
+}
+.badge-sm:empty { display: none; }
+.badge-sm {
+  background: var(--bad); color: #fff; border-radius: 999px; font-size: .68rem;
+  font-weight: 700; padding: 1px 7px; line-height: 1.5;
+}
+#queue-view { padding-bottom: 60px; }
+.sub-tight { color: var(--muted); font-size: .82rem; margin: 4px 0 0; }
+
+.inp {
+  font: inherit; font-size: .82rem; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  min-width: 0;
+}
+.inp:focus-visible { border-color: var(--accent); }
+#q-search { flex: 1 1 220px; }
+#queue-filters { gap: 8px; align-items: center; }
+
+/* detail drawer */
+.scrim {
+  position: fixed; inset: 0; background: rgba(8, 10, 14, .45);
+  backdrop-filter: blur(2px); z-index: 40;
+}
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%);
+  background: var(--surface); border-left: 1px solid var(--border);
+  box-shadow: var(--shadow); z-index: 50; overflow-y: auto; padding: 0 22px 40px;
+}
+.drawer-head {
+  position: sticky; top: 0; background: var(--surface); padding: 18px 0 12px;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--border); margin-bottom: 16px; z-index: 1;
+}
+.drawer-head h3 { margin: 0; font-size: 1.05rem; letter-spacing: -.01em; }
+
+.facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px; margin-bottom: 16px;
+}
+.fact {
+  background: var(--surface-2); border-radius: 9px; padding: 9px 11px;
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.fk { font-size: .68rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.fv { font-size: .9rem; font-weight: 600; overflow-wrap: anywhere; }
+
+.why-block {
+  font-size: .86rem; color: var(--muted); background: var(--surface-2);
+  border-left: 3px solid var(--border); padding: 10px 12px; border-radius: 0 8px 8px 0;
+  margin: 0 0 12px;
+}
+.drawer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.drawer-actions .run { margin-top: 0; }
+.assign-row, .note-row { display: flex; gap: 8px; margin-bottom: 12px; align-items: flex-start; }
+.assign-row .inp, .note-row .inp { flex: 1; }
+.note-row textarea { resize: vertical; font-family: inherit; }
+
+.hist-h { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); margin: 22px 0 8px; }
+.hist { display: flex; flex-direction: column; gap: 8px; }
+.hist-line {
+  display: grid; grid-template-columns: 92px 1fr auto; gap: 10px;
+  font-size: .78rem; align-items: baseline;
+  padding-bottom: 8px; border-bottom: 1px dashed var(--border);
+}
+.hist-kind { color: var(--accent); font-weight: 600; }
+.hist-body { color: var(--text); overflow-wrap: anywhere; }
+.hist-when { color: var(--muted); white-space: nowrap; }
+
+.toast {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+  background: var(--bad); color: #fff; padding: 11px 18px; border-radius: 9px;
+  font-size: .84rem; z-index: 60; box-shadow: var(--shadow); max-width: 90vw;
+}
+
+@media (max-width: 720px) {
+  .viewnav button { padding: 6px 10px; font-size: .8rem; }
+  .drawer { width: 100%; }
+  .hist-line { grid-template-columns: 1fr; gap: 2px; }
+  .topbar .wrap { flex-wrap: wrap; gap: 8px; }
+  /* a worklist row carries up to six pills plus an amount; on a phone they have
+     to wrap or the row scrolls sideways under the reader's thumb */
+  .row-head { flex-wrap: wrap; row-gap: 6px; }
+  .row-head .amt { margin-left: 0; width: 100%; }
+  .row-head .id { overflow-wrap: anywhere; }
+  #queue-filters .inp { flex: 1 1 100%; }
+}
