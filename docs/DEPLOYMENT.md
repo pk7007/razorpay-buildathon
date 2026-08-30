@@ -48,7 +48,8 @@ web: python -m uvicorn finance_controller.api:app --host 0.0.0.0 --port ${PORT:-
 ## Bare process
 
 ```bash
-pip install -r requirements.txt && pip install -e .
+pip install -r requirements.txt
+pip install -e .
 python -m uvicorn finance_controller.api:app --host 0.0.0.0 --port 8000
 ```
 

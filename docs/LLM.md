@@ -115,8 +115,15 @@ is computed from them, and a stale price is a wrong number in the audit trail.
 Pull the key mid-demo:
 
 ```bash
-# with a key set, then:
-unset ANTHROPIC_API_KEY && python scripts/run_reconciliation.py --dataset messy
+# macOS / Linux
+unset ANTHROPIC_API_KEY
+python scripts/run_reconciliation.py --dataset messy
+```
+
+```powershell
+# Windows PowerShell
+$env:ANTHROPIC_API_KEY = ""
+python scripts/run_reconciliation.py --dataset messy
 ```
 
 Everything still works. `resolve()` catches **any** exception from the model

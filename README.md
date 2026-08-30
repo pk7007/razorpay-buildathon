@@ -302,12 +302,27 @@ git clone https://github.com/pk7007/razorpay-buildathon.git
 cd razorpay-buildathon
 
 python -m venv .venv
-.venv\Scripts\activate          # Windows
 source .venv/bin/activate       # macOS / Linux
-
 pip install -r requirements.txt
 pip install -e .
 ```
+
+<details>
+<summary>Windows PowerShell</summary>
+
+```powershell
+git clone https://github.com/pk7007/razorpay-buildathon.git
+cd razorpay-buildathon
+
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+pip install -e .
+```
+
+Run each command on its own line. **`&&` is not a valid statement separator in
+Windows PowerShell 5.1** — use `;` if you need them on one line.
+</details>
 
 ## Environment variables
 

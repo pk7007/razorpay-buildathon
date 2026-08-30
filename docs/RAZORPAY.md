@@ -34,7 +34,7 @@ RAZORPAY_KEY_SECRET=your_secret_here
 `.env` is gitignored and has never been committed. Verify any time with:
 
 ```bash
-git check-ignore -v .env && echo "ignored — safe"
+git check-ignore -v .env        # prints a rule if ignored; silent if NOT
 ```
 
 ## 3. Make sure the account has data
