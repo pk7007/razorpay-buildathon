@@ -17,12 +17,73 @@ from .metrics import (
     score_exceptions,
     score_matches,
 )
-from .models import Entry, ReconResult
+from .models import Entry, MatchGroup, ReconResult
 from .normalize import normalize
 from .reconcile import reconcile
 from .resolver import resolve
 
 _SOURCES = ("payment", "settlement", "bank", "ledger", "refund", "chargeback")
+
+
+
+def _admit_resolver_groups(
+    proposed: list[MatchGroup],
+    residual: list[Entry],
+    audit: AuditLog,
+) -> tuple[list[MatchGroup], list[Entry]]:
+    """Check every group the resolver proposes before any of it is believed.
+
+    The resolver is the one stage that can be a language model, and a model can
+    return an id that was never in the batch, claim the same entry twice, or
+    reach for an entry a rule already placed. The conservation assertion further
+    down would catch all three -- by killing the run, which turns a bad answer
+    from the model into an outage.
+
+    So each proposal is admitted or refused on its own: a bad group is dropped,
+    its entries go back to the leftover pile to be explained as exceptions, and
+    the refusal is written to the audit trail with the reason. The cost of a
+    misbehaving model is therefore bounded at 'fewer matches', which is the
+    whole point of putting it last.
+    """
+    allowed = {e.id for e in residual}
+    claimed: set[str] = set()
+    admitted: list[MatchGroup] = []
+    refused: set[str] = set()
+
+    for g in proposed:
+        ids = list(g.entry_ids)
+        unknown = [i for i in ids if i not in allowed]
+        repeated = [i for i in ids if i in claimed]
+        duplicated_within = len(ids) != len(set(ids))
+
+        if unknown or repeated or duplicated_within or len(set(ids)) < 2:
+            why = (
+                f"unknown entry id(s) {unknown}" if unknown
+                else f"entry id(s) {repeated} already claimed by another group" if repeated
+                else "the same id appears twice in one group" if duplicated_within
+                else "fewer than two distinct entries"
+            )
+            audit.record(
+                stage=g.stage, rule="resolver-proposal-refused@v1",
+                inputs=sorted(set(ids)), outcome="rejected", confidence=0.0,
+                rationale=(
+                    f"resolver proposed a group this batch cannot support: {why}. "
+                    f"The proposal was dropped; the entries stay unmatched and are "
+                    f"reported as exceptions."
+                ),
+            )
+            refused.update(i for i in ids if i in allowed)
+            continue
+
+        claimed.update(ids)
+        admitted.append(g)
+
+    # The leftover pile is recomputed rather than taken on trust. A resolver can
+    # drop an entry from BOTH its groups and its leftover -- an easy thing for a
+    # model to do and an impossible one to notice downstream -- so the only safe
+    # definition is "everything the resolver was given, minus what it actually
+    # got to keep".
+    return admitted, [e for e in residual if e.id not in claimed]
 
 
 def run_rows(
@@ -56,7 +117,8 @@ def run_rows(
             residual.append(by_id[g.entry_ids[0]])
     groups = kept_groups
 
-    res_groups, leftover, usage = resolve(residual, audit)
+    res_groups, _resolver_leftover, usage = resolve(residual, audit)
+    res_groups, leftover = _admit_resolver_groups(res_groups, residual, audit)
     groups.extend(res_groups)
 
     exceptions = dup_exceptions + classify_residual(leftover, entries, audit)
