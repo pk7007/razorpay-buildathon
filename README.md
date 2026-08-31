@@ -1,18 +1,47 @@
 # AI Finance Controller
 
-**Four-way settlement reconciliation that closes a merchant's month-end loop, proves its own accuracy on data it has never seen, remembers the work between runs, and tells you exactly how much money to go chase.**
+**Six-source settlement reconciliation that closes a merchant's month-end loop, proves its own accuracy on data it has never seen, remembers the work between runs, and tells you exactly how much money to go chase.**
 
 Built for the **[Razorpay AI Buildathon](https://razorpay.com/buildathon/) — Track 4: AI Finance Controller**.
 
 [![ci](https://github.com/pk7007/razorpay-buildathon/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pk7007/razorpay-buildathon/actions/workflows/ci.yml)
 
-Python 3.11 · FastAPI · SQLite · MIT · 264 tests
+Python 3.11 · FastAPI · SQLite · MIT · 860 tests
 
 | held-out precision | held-out recall | ₹ in wrong groups | throughput | replay |
 | --- | --- | --- | --- | --- |
 | **1.0000** | **0.9928** | **₹0** | **22,609 rec/s** | stable |
 
 ---
+
+## What is actually different
+
+Most reconciliation tooling **compares two records and reports the difference.**
+
+This does four things instead, and each one is checkable in the running app:
+
+| | |
+| --- | --- |
+| **Reconciles financial events, not rows** | A refund, a chargeback and a TDS deduction are terms in the settlement equation, not noise to filter out. A partially refunded sale settles for less and still ties. |
+| **Explains every decision with the arithmetic** | Every match and every refusal writes an audit record containing the actual sum. Nothing is "matched (94%)" with no reason attached. |
+| **Carries exceptions across periods** | The queue survives runs. An exception raised in July that a later batch explains closes itself; one that does not keeps its notes, its assignee and its age. |
+| **Uses AI only on the residual uncertainty** | Rules decide first and what they decide is final. A model is shown only what is left — never an entry a rule already placed — and a bad answer from it costs recall, never precision. |
+
+The last one is the load-bearing claim, so it is enforced in code rather than
+asserted: `tests/test_ai_boundary.py` checks that the model never sees a
+rule-matched entry, that enabling it leaves every deterministic group byte for
+byte identical, and that a model returning a hallucinated id loses its proposal
+instead of the run. The Overview screen shows the same split measured from the
+batch in front of you:
+
+```
+How this batch was decided
+  92.7%  accounting identity     gross = net + fee + tax + TDS, tied across sources
+   4.6%  exact reference         a shared UTR or order id, matched exactly
+   2.8%  scorer, on the residual a deterministic scorer — no model was involved
+```
+
+That number moves with the data. It is not a diagram.
 
 ## Overview
 
@@ -285,9 +314,13 @@ razorpay-buildathon/
 │   ├── styles/                 design tokens, shell, components
 │   ├── js/views/               dashboard, reconcile, worklist, runs, import, accuracy
 │   └── fonts/                  IBM Plex, self-hosted (the CSP allows no external origin)
-├── data/datasets/              3 benchmark datasets + answer keys
-├── scripts/                    CLI entry point, dataset generator
-├── tests/                      264 tests
+├── data/datasets/              demo month + 3 benchmark datasets + answer keys
+├── scripts/                    CLI, dataset generator, demo_reset, verify_razorpay, verify_llm
+├── tests/                      860 tests
+│   ├── test_financial_correctness.py   the settlement identity vs an independent oracle
+│   ├── test_adversarial.py             attempts to make the matcher confidently wrong
+│   ├── test_ai_boundary.py             the model never sees what rules already decided
+│   └── test_messy_end_to_end.py        real export formats through the whole product
 ├── docs/                       architecture, metrics, api, dev, deploy, demo, pitch
 ├── .github/workflows/ci.yml    lint · tests · reproducibility · docker
 ├── Dockerfile · render.yaml · Procfile
@@ -366,10 +399,23 @@ python scripts/run_reconciliation.py --input your/export/dir --out out/
 The CLI writes `reconciliation.json`, `exceptions.csv`, `audit.jsonl` and
 `metrics.json` into `--out`.
 
+## Before a demo
+
+```bash
+python scripts/demo_reset.py
+```
+
+Moves the current database aside (renames, never deletes), reconciles the demo
+month, and checks every group and every exception against an answer key before
+saying the state is safe to present. "It ran without an error" is not a green
+light — producing the *same* nine groups and four exceptions is. It then works
+two exceptions so the queue shows a real day rather than a wall of untouched
+rows.
+
 ## Testing
 
 ```bash
-python -m pytest -q              # 264 tests
+python -m pytest -q              # 860 tests
 python -m pytest -q -m slow      # + throughput benchmark
 python -m ruff check .           # lint
 ```

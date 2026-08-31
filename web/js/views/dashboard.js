@@ -211,7 +211,8 @@ export async function dashboard(root, ctx) {
           el("h3", { text: "This run" }),
           el("span", { class: "spacer" }),
           el("a", { href: "#/evidence", class: "card-link", text: "Accuracy evidence →" })),
-        el("div", { class: "card-body" },
+        el("div", { class: "card-body", style: { display: "grid", gap: "14px" } },
+          decidedBy(m, health),
           el("div", { class: "kv" },
             kvItem("Resolver", health.resolver === "llm" ? "LLM + rules" : "Deterministic only",
               health.resolver === "llm"
@@ -229,6 +230,48 @@ export async function dashboard(root, ctx) {
                 : ""),
           ))));
   } catch { /* the dashboard is still useful without provenance */ }
+}
+
+/* What decided this batch, as a proportion of the groups formed.
+
+   This is the architecture claim rendered as the run's own numbers rather than
+   asserted as a tagline: accounting identities and exact references settle the
+   overwhelming majority, and whatever is left is the only thing a model is ever
+   shown. A judge does not have to take the diagram on trust — the bar is
+   measured from the run in front of them, and it moves when the data does. */
+function decidedBy(m, health) {
+  const usedModel = health.resolver === "llm";
+  const bands = [
+    ["Accounting identity", m.structural_share, "var(--viz-1)",
+     "gross = net + fee + tax + TDS, tied across sources"],
+    ["Exact reference", m.deterministic_share, "var(--viz-2)",
+     "a shared UTR or order id, matched exactly"],
+    [usedModel ? "Model, on the residual" : "Scorer, on the residual",
+     m.resolver_share, "var(--viz-3)",
+     usedModel
+       ? "an LLM, shown only what the rules could not place"
+       : "a deterministic scorer — no model was involved"],
+  ].filter(([, share]) => (share || 0) > 0);
+
+  if (!bands.length) return el("div", {});
+
+  return el("div", {},
+    el("div", { class: "metric-k", style: { marginBottom: "6px" },
+                text: "How this batch was decided" }),
+    el("div", { class: "moneybar", role: "img",
+                "aria-label": bands.map(([k, v]) => `${k} ${pct(v)}`).join(", ") },
+      ...bands.map(([k, v, c]) =>
+        el("span", { style: { width: `${(v * 100).toFixed(1)}%`, background: c },
+                     title: `${k}: ${pct(v)}` }))),
+    el("div", { class: "moneykey" },
+      ...bands.map(([k, v, c, note]) =>
+        el("div", { class: "moneykey-item" },
+          el("span", { class: "moneykey-sw", style: { background: c } }),
+          el("div", {},
+            el("div", {},
+              el("span", { class: "moneykey-v", text: pct(v) }), " ",
+              el("span", { class: "moneykey-k", text: k })),
+            el("div", { class: "moneykey-k", style: { fontSize: "11px" }, text: note }))))));
 }
 
 function kvItem(k, v, note) {
