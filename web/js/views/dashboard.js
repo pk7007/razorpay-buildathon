@@ -66,7 +66,7 @@ export async function dashboard(root, ctx) {
       el("span", { text: ago(last.started_at) }), ", ",
       el("span", { text: `${num(m.total_entries)} records` })),
     el("span", { class: "grow" }),
-    el("a", { href: "#/runs", class: "topbar-sub", text: "Compare runs →" }));
+    el("a", { href: "#/runs", class: "card-link", text: "Compare runs →" }));
 
   // ---- headline: accuracy, volume, and the money that needs chasing --------
   clear(metricsSlot).append(
@@ -149,7 +149,7 @@ export async function dashboard(root, ctx) {
     el("div", { class: "card-head" },
       el("h3", { text: "Where the work is" }),
       el("span", { class: "spacer" }),
-      byCat.length ? el("a", { href: "#/exceptions", class: "topbar-sub",
+      byCat.length ? el("a", { href: "#/exceptions", class: "card-link",
                                text: "Open worklist →" }) : null),
     el("div", { class: "card-body" },
       byCat.length
@@ -179,7 +179,7 @@ export async function dashboard(root, ctx) {
     el("div", { class: "card-head" },
       el("h3", { text: "Recent runs" }),
       el("span", { class: "spacer" }),
-      el("a", { href: "#/runs", class: "topbar-sub", text: "All runs →" })),
+      el("a", { href: "#/runs", class: "card-link", text: "All runs →" })),
     el("div", { class: "grid-scroll" },
       el("table", { class: "grid" },
         el("thead", {}, el("tr", {},
@@ -210,7 +210,7 @@ export async function dashboard(root, ctx) {
         el("div", { class: "card-head" },
           el("h3", { text: "This run" }),
           el("span", { class: "spacer" }),
-          el("a", { href: "#/evidence", class: "topbar-sub", text: "Accuracy evidence →" })),
+          el("a", { href: "#/evidence", class: "card-link", text: "Accuracy evidence →" })),
         el("div", { class: "card-body" },
           el("div", { class: "kv" },
             kvItem("Resolver", health.resolver === "llm" ? "LLM + rules" : "Deterministic only",

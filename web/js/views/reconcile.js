@@ -80,7 +80,7 @@ export async function reconcile(root, ctx) {
     el("div", { class: "section-head" },
       el("h3", { text: "Choose a batch" }),
       el("span", { class: "spacer" }),
-      el("a", { class: "topbar-sub", href: "#/import", text: "Or import your own files →" })),
+      el("a", { class: "card-link", href: "#/import", text: "Or import your own files →" })),
     cards);
 
   /* No simulated progress. The pipeline runs server-side in a single call, so
@@ -371,7 +371,7 @@ function exceptionsTable(result, ccy) {
     el("div", { class: "grid-foot" },
       el("span", { text: "These persist to the worklist and survive the next run" }),
       el("span", { class: "spacer" }),
-      el("a", { href: "#/exceptions", text: "Open worklist →" })));
+      el("a", { href: "#/exceptions", class: "card-link", text: "Open worklist →" })));
 }
 
 function auditList(result) {

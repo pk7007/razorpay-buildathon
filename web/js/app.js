@@ -52,6 +52,21 @@ const pageTitle = el("h1", { text: "Overview" });
 const pageSub = el("span", { class: "topbar-sub" });
 const counts = {};
 let runShortcut = null;
+let railToggle = null;
+
+/* Off-canvas on a phone, the rail covers the page. Anything that obscures the
+   page has to close on Escape as well as on a tap, and it has to hand focus
+   over when it opens or a keyboard user is left behind it. */
+function setRail(open) {
+  rail.dataset.open = String(open);
+  if (railToggle) railToggle.setAttribute("aria-expanded", String(open));
+  if (open) {
+    const first = rail.querySelector(".nav-item");
+    if (first) first.focus();
+  } else if (railToggle && document.activeElement && rail.contains(document.activeElement)) {
+    railToggle.focus();
+  }
+}
 
 function buildRail() {
   const nav = el("nav", { class: "nav", "aria-label": "Sections" });
@@ -97,14 +112,11 @@ function buildTopbar() {
   const toggle = el("button", {
     class: "btn btn-ghost btn-icon rail-toggle", "aria-label": "Open navigation",
     "aria-expanded": "false", "aria-controls": "rail",
-    onClick: () => {
-      const open = rail.dataset.open === "true";
-      rail.dataset.open = String(!open);
-      toggle.setAttribute("aria-expanded", String(!open));
-    },
+    onClick: () => setRail(rail.dataset.open !== "true"),
   }, icon("menu"));
+  railToggle = toggle;
 
-  const scrim = el("div", { class: "rail-scrim", onClick: () => { rail.dataset.open = "false"; } });
+  const scrim = el("div", { class: "rail-scrim", onClick: () => setRail(false) });
 
   runShortcut = el("button", {
     class: "btn btn-sm", onClick: () => (location.hash = "#/reconcile"),
@@ -145,7 +157,7 @@ function navigate(route, params, isCurrent) {
   if (runShortcut) runShortcut.classList.toggle("hidden", route === "reconcile");
   document.title = `${TITLES[route] || "Overview"} · AI Finance Controller`;
   if (isDrawerOpen()) closeDrawer();
-  rail.dataset.open = "false";
+  setRail(false);
 
   clear(content);
   const view = VIEWS[route] || dashboard;
@@ -172,6 +184,11 @@ refreshCounts();
    finance analyst already uses does. Escape closes whatever is open. */
 let pending = null;
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && rail.dataset.open === "true") {
+    e.preventDefault();
+    setRail(false);
+    return;
+  }
   const tag = (e.target.tagName || "").toLowerCase();
   if (tag === "input" || tag === "textarea" || tag === "select" || e.metaKey || e.ctrlKey) return;
   if (e.key === "g") { pending = setTimeout(() => (pending = null), 1200); return; }

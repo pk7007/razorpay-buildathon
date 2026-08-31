@@ -5,10 +5,10 @@
    drawer, because a 30-column table is a spreadsheet, not a workflow. */
 
 import { api } from "../api.js";
-import { money, num, label, date, titleCase } from "../format.js";
+import { money, num, label, date, titleCase, minorUnits } from "../format.js";
 import {
   el, clear, icon, badge, emptyState, errorState, skeletonGrid,
-  excTone, workTone, priorityTone, metric,
+  excTone, workTone, priorityTone, metric, toast,
 } from "../ui.js";
 import { showException } from "./exception-detail.js";
 
@@ -26,6 +26,7 @@ export async function exceptions(root, ctx, params = {}) {
   const view = el("div", { class: "view" });
   root.append(view);
 
+  let lastItems = [];
   const state = {
     status: params.status ?? "open",
     category: params.category ?? "",
@@ -118,12 +119,51 @@ export async function exceptions(root, ctx, params = {}) {
       state.order = state.order === "desc" ? "asc" : "desc"; sync(); renderFilters(); load();
     });
 
+    /* Triage does not end in this app. The next step is an email to the bank or
+       a line in a spreadsheet, so the list has to be able to leave — as the
+       filtered view on screen, not as a dump of everything. */
+    const exportBtn = el("button", {
+      class: "btn btn-sm", title: "Download the rows currently shown",
+    }, icon("upload"), "Export CSV");
+    exportBtn.addEventListener("click", () => exportCsv(exportBtn));
+
     clear(filterSlot).append(
       el("div", { class: "filters" },
         el("div", { class: "search-wrap" }, icon("search"), search),
         statusChips,
         el("span", { class: "grow" }),
-        catSel, sortSel, orderBtn));
+        catSel, sortSel, orderBtn, exportBtn));
+  }
+
+  function exportCsv(btn) {
+    if (!lastItems.length) { toast("Nothing to export", ""); return; }
+    const cols = [
+      ["id", (x) => x.id], ["status", (x) => x.status], ["category", (x) => x.category],
+      ["priority", (x) => x.priority], ["entry_id", (x) => x.entry_id],
+      ["source", (x) => x.source], ["value_date", (x) => x.value_date],
+      ["currency", (x) => x.currency],
+      ["amount", (x) => (x.amount_minor / minorUnits(x.currency)).toFixed(2)],
+      ["times_seen", (x) => x.times_seen], ["assignee", (x) => x.assignee || ""],
+      ["reason", (x) => x.rationale], ["suggested_action", (x) => x.suggested_action || ""],
+      ["resolution_reason", (x) => x.resolution_reason || ""],
+    ];
+    // Excel opens a bare UTF-8 CSV as latin-1 and turns the rupee sign into
+    // mojibake; the BOM is what makes it read the file correctly.
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const csv = "\ufeff"
+      + [cols.map(([h]) => h).join(","),
+         ...lastItems.map((x) => cols.map(([, f]) => esc(f(x))).join(","))].join("\r\n");
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const scope = state.status || "all";
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = el("a", { href: url, download: `exceptions-${scope}-${stamp}.csv` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`Exported ${num(lastItems.length)} rows`, "ok");
+    btn.blur();
   }
 
   function chip(text, active, onClick, count) {
@@ -153,6 +193,7 @@ export async function exceptions(root, ctx, params = {}) {
       return;
     }
 
+    lastItems = data.items;
     if (!data.items.length) {
       /* Three different empty states, because they mean three different things:
          nothing has ever run, the queue has been worked to zero, or the filters
@@ -188,6 +229,7 @@ export async function exceptions(root, ctx, params = {}) {
 
     announce.textContent = `${data.items.length} of ${data.total} exceptions shown`;
 
+    lastItems = data.items;
     const rows = data.items.map((x) => {
       const tr = el("tr", { dataset: { clickable: "1" }, tabindex: "0" },
         el("td", {}, badge(label(x.status), workTone(x.status), { quiet: true })),
