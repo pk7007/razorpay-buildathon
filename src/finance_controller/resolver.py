@@ -19,6 +19,8 @@ import re
 from .audit import AuditLog
 from .config import SETTINGS
 from .models import Entry, MatchGroup
+from .money import fmt
+from .reconcile import ROUNDING_SLACK_PAISE
 
 _TOKEN_RE = re.compile(r"[a-z0-9]{3,}")
 
@@ -103,28 +105,76 @@ def _heuristic_resolve(
     return groups, leftover, _empty_usage()
 
 
+# Three refusals a candidate pair has to survive before it is scored at all.
+# Each of these already existed as a rule in the structural matcher and was
+# missing here, so the heuristic fallback could reach conclusions the
+# deterministic path had explicitly rejected -- the worst possible arrangement.
+def _refuse_outright(a: Entry, b: Entry) -> str | None:
+    if a.currency != b.currency:
+        # 1,000 USD and 1,000 INR are the same integer and nothing else. There
+        # is no rate here, so there is no comparison to be made.
+        return f"different currencies ({a.currency} vs {b.currency})"
+    if a.is_deduction or b.is_deduction:
+        # A refund or chargeback attaches to the payment it names. Attaching it
+        # to whichever payment happens to share its amount invents the link, and
+        # a refund pointed at the wrong sale corrupts two records at once.
+        return "a refund or chargeback attaches by reference, never by amount"
+    if _references_disagree(a, b):
+        # A missing reference proves nothing. Two DIFFERENT references are
+        # positive evidence against the pair: UTR8811 and UTR8812 are two
+        # payouts, and equal amounts on the same day do not make them one.
+        return f"references disagree ({a.reference} vs {b.reference})"
+    return None
+
+
+def _reference_echoes(a: Entry, b: Entry) -> bool:
+    """True when the two rows point at the same handle, however it is carried."""
+    if not (a.reference and b.reference):
+        return False
+    ar, br = a.reference.lower(), b.reference.lower()
+    return (ar == br
+            or ar in (b.narration or "").lower()
+            or br in (a.narration or "").lower())
+
+
+def _references_disagree(a: Entry, b: Entry) -> bool:
+    return bool(a.reference and b.reference) and not _reference_echoes(a, b)
+
+
 def _pair_score(a: Entry, b: Entry, tol: int) -> tuple[float, str]:
+    if _refuse_outright(a, b):
+        return 0.0, ""
+
     amt_gap = abs(a.amount_paise - b.amount_paise)
-    if amt_gap <= tol:
-        amt = 1.0
-    elif amt_gap <= max(tol * 20, abs(a.amount_paise) * 0.03):
-        amt = 0.6
+    if amt_gap <= ROUNDING_SLACK_PAISE:
+        amt = 1.0                      # rounding drift between two systems
+    elif amt_gap <= max(tol * 20, abs(a.amount_paise) * 3 // 100):
+        amt = 0.6                      # close, but the gap is real and unexplained
     else:
         return 0.0, ""
+
     day_gap = abs((a.value_date - b.value_date).days)
     date = 1.0 if day_gap <= 3 else 0.6 if day_gap <= 7 else 0.2
+
     ta, tb = _tokens(a.narration), _tokens(b.narration)
     jac = len(ta & tb) / len(ta | tb) if (ta | tb) else 0.0
-    ref = 0.0
-    if a.reference and b.reference and (
-        a.reference.lower() in (b.narration or "").lower()
-        or b.reference.lower() in (a.narration or "").lower()
-        or a.reference.lower() == b.reference.lower()
-    ):
-        ref = 1.0
-    score = 0.5 * amt + 0.25 * date + 0.15 * jac + 0.1 * ref
+    ref = 1.0 if _reference_echoes(a, b) else 0.0
+
+    # The weights encode one rule: an EXACT amount inside the payout window can
+    # stand on its own; anything less needs corroboration.
+    #
+    #   exact amount, <=3 days      0.55 + 0.20 = 0.75  >= 0.72  -> matches
+    #   exact amount, 4-7 days      0.55 + 0.12 = 0.67           -> needs more
+    #   near amount,  <=3 days      0.33 + 0.20 = 0.53           -> needs more
+    #   near amount + narration+ref 0.33 + 0.20 + 0.15 + 0.10    -> matches
+    #
+    # The old weights let "amounts are roughly similar and the dates are close"
+    # reach the threshold by itself, which is how a 1,000 USD settlement met a
+    # 1,000 INR bank credit. An unexplained gap now has to be corroborated by
+    # something that actually ties the two rows together.
+    score = 0.55 * amt + 0.20 * date + 0.15 * jac + 0.10 * ref
     why = (
-        f"heuristic: amount gap ₹{amt_gap/100:,.2f}, {day_gap}d apart, "
+        f"heuristic: amount gap {fmt(amt_gap, a.currency)}, {day_gap}d apart, "
         f"narration overlap {jac:.0%}" + (", reference echo" if ref else "")
     )
     return score, why

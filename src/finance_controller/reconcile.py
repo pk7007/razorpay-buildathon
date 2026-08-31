@@ -101,14 +101,32 @@ def reconcile(
 # --------------------------------------------------------------------------- rules
 
 
+def _references_contradict(unit_refs: set[str], candidate: Entry) -> bool:
+    """True when both sides name a reference and none of them agree.
+
+    A missing reference is an absence of evidence and proves nothing. Two
+    *different* references are evidence of the opposite: UTR8811 and UTR8812 are
+    two payouts, and matching them because the amounts happen to agree is how a
+    reconciliation quietly books one payout twice.
+    """
+    if not unit_refs or not candidate.reference:
+        return False
+    return candidate.reference.strip().lower() not in unit_refs
+
+
+
+
 def _rule_exact_reference(entries: list[Entry], uf: _UF, tol: int) -> None:
     """Entries that share a cleaned reference (order_id / UTR) and agree on amount."""
-    by_ref: dict[str, list[Entry]] = defaultdict(list)
+    # Bucket by (reference, currency). A reference shared across two currencies
+    # says the rows are related, not that 1,000 USD equals 1,000 INR -- and
+    # joining them would sum two different units of account into one figure.
+    by_ref: dict[tuple[str, str], list[Entry]] = defaultdict(list)
     for e in entries:
         if e.reference:
-            by_ref[e.reference.strip().lower()].append(e)
+            by_ref[(e.reference.strip().lower(), e.currency)].append(e)
 
-    for ref, bucket in by_ref.items():
+    for (ref, currency), bucket in by_ref.items():
         if len(bucket) < 2:
             continue
         # cluster the bucket by amount so a shared ref with incompatible amounts
@@ -120,10 +138,12 @@ def _rule_exact_reference(entries: list[Entry], uf: _UF, tol: int) -> None:
                 cluster.append(e)
             else:
                 _join_all(uf, cluster, "exact-reference@v2", "deterministic", 1.0,
-                          f"shared reference {ref!r}, amounts equal within ₹{tol/100:.2f}")
+                          f"shared reference {ref!r} in {currency}, amounts equal "
+                          f"within {fmt(tol, currency)}")
                 cluster = [e]
         _join_all(uf, cluster, "exact-reference@v2", "deterministic", 1.0,
-                  f"shared reference {ref!r}, amounts equal within ₹{tol/100:.2f}")
+                  f"shared reference {ref!r} in {currency}, amounts equal "
+                  f"within {fmt(tol, currency)}")
 
 
 def _rule_link_deductions(
@@ -200,7 +220,8 @@ class _Unit:
     """A current connected component, viewed as one atomic reconciliation unit."""
 
     __slots__ = ("root", "ids", "gross", "net", "dates", "by_source", "consumed",
-                 "currency", "deductions", "base_gross", "deduction_events")
+                 "currency", "deductions", "base_gross", "deduction_events",
+                 "refs")
 
     def __init__(self, root: str, members: list[Entry]) -> None:
         self.root = root
@@ -225,6 +246,9 @@ class _Unit:
         self.gross = self.base_gross - self.deductions
         self.net = setl or bank or max((e.amount_paise for e in members), default=0)
         self.dates = {e.value_date for e in members}
+        # Every reference the unit carries, so an amount-based rule can notice
+        # that a candidate's reference contradicts one already inside the unit.
+        self.refs = {e.reference.strip().lower() for e in members if e.reference}
         self.by_source: dict[str, set[date]] = defaultdict(set)
         for e in members:
             self.by_source[e.source].add(e.value_date)
@@ -434,7 +458,9 @@ def _rule_merged_bank_credit(
         for b in pending:
             if b.id in done:
                 continue
-            cands = [u for u in window_units(b) if u.net == b.amount_paise]
+            cands = [u for u in window_units(b)
+                     if u.net == b.amount_paise
+                     and not _references_contradict(u.refs, b)]
             if len(cands) == 1:
                 _link_unit(uf, cands[0], b, "bank-to-settlement@v1", 0.96,
                            f"bank credit ₹{b.amount_paise/100:,.2f} on {b.value_date} "

@@ -79,7 +79,8 @@ def normalize(source: Source, rows: list[dict]) -> list[Entry]:
                     value_date=_to_date(r.get("created_at") or r.get("date")),
                     currency=normalize_code(r.get("currency")),
                     method=_clean_ref(r.get("method")),
-                    reference=_clean_ref(r.get("order_id"), r.get("rrn"), r.get("id")),
+                    reference=_clean_ref(r.get("order_id"), r.get("rrn"),
+                                        r.get("reference"), r.get("id")),
                     narration=_clean_ref(r.get("method"), r.get("description"), r.get("status")),
                     raw=r,
                 )
@@ -94,7 +95,7 @@ def normalize(source: Source, rows: list[dict]) -> list[Entry]:
                         r.get("settled_at") or r.get("created_at") or r.get("date")
                     ),
                     currency=normalize_code(r.get("currency")),
-                    reference=_clean_ref(r.get("utr"), r.get("id")),
+                    reference=_clean_ref(r.get("utr"), r.get("reference"), r.get("id")),
                     narration="settlement payout",
                     fee_paise=_to_paise(r.get("fees", r.get("fee", 0))),
                     tax_paise=_to_paise(r.get("tax", 0)),
@@ -121,7 +122,8 @@ def normalize(source: Source, rows: list[dict]) -> list[Entry]:
                     amount_paise=amt,
                     currency=normalize_code(r.get("currency")),
                     value_date=_to_date(r.get("value_date") or r.get("date")),
-                    reference=_clean_ref(r.get("utr"), r.get("ref"))
+                    reference=_clean_ref(r.get("utr"), r.get("ref"), r.get("reference"),
+                                        r.get("rrn"))
                     or _ref_from_narration(narration),
                     narration=narration,
                     raw=r,
@@ -135,7 +137,8 @@ def normalize(source: Source, rows: list[dict]) -> list[Entry]:
                     amount_paise=_to_paise(r.get("amount", 0)),
                     currency=normalize_code(r.get("currency")),
                     value_date=_to_date(r.get("date")),
-                    reference=_clean_ref(r.get("external_ref"), r.get("ref"))
+                    reference=_clean_ref(r.get("external_ref"), r.get("ref"),
+                                        r.get("reference"), r.get("order_id"))
                     or _ref_from_narration(r.get("memo")),
                     narration=_clean_ref(r.get("memo"), r.get("description")),
                     raw=r,

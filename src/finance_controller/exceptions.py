@@ -38,16 +38,29 @@ _ACTION: dict[ExceptionCategory, str] = {
 def extract_duplicates(
     groups: list[MatchGroup], by_id: dict[str, Entry], audit: AuditLog
 ) -> tuple[list[MatchGroup], list[ReconException]]:
-    """Within each group, keep one entry per (source, amount); the rest are duplicates."""
+    """Within each group, keep one entry per (source, amount); the rest are duplicates.
+
+    A ledger or payment row repeated inside one group is a double-booking. A
+    *bank* or *settlement* row repeated is stronger still -- it means the group
+    claims one payout arrived twice -- but only when the two rows also share a
+    value date. Two credits of the same size on different days inside one group
+    are a legitimate merged payout, which is a different rule's business.
+    """
     kept_groups: list[MatchGroup] = []
     dups: list[ReconException] = []
     for g in groups:
         seen: dict[tuple[str, int], str] = {}
+        seen_dates: dict[tuple[str, int], object] = {}
         keep: list[str] = []
         for eid in g.entry_ids:
             e = by_id[eid]
             key = (e.source, round(e.amount_paise, -1))
-            if key in seen and e.source in ("ledger", "payment"):
+            same_day = seen_dates.get(key) == e.value_date
+            is_duplicate = key in seen and (
+                e.source in ("ledger", "payment")
+                or (e.source in ("bank", "settlement") and same_day)
+            )
+            if is_duplicate:
                 dups.append(
                     ReconException(
                         entry_id=eid,
@@ -70,6 +83,7 @@ def extract_duplicates(
                 )
             else:
                 seen[key] = eid
+                seen_dates[key] = e.value_date
                 keep.append(eid)
         if len(keep) != len(g.entry_ids):
             g = g.model_copy(update={"entry_ids": keep})

@@ -38,6 +38,31 @@ from .money import DEFAULT_CURRENCY, Amount, Provenance, fmt
 BPS = 10_000  # basis points in 100%
 
 
+def _div_round_half_up(numerator: int, denominator: int) -> int:
+    """Integer division, halves rounded away from zero. No float involved.
+
+    Two things were wrong with ``round(gross * bps / BPS)``:
+
+    * It goes through a float. This module's whole contract is integer paise,
+      and a float divide on a nine-figure paise amount can land a paisa off —
+      which is a correctness bug in a tool whose job is to notice a paisa.
+    * Python's ``round`` is banker's rounding, so a fee of exactly half a paisa
+      rounds to even: 2% of 100.25 gives 2.00, and 2% of 0.25 gives 0.00.
+      Payment processors and Indian accounting round halves *up*, so the engine
+      would have quietly disagreed with the settlement report on every .5 case.
+
+    Whatever the convention, it has to be a decision rather than a default. This
+    is the decision: half away from zero, in integers, everywhere money is
+    derived from a rate.
+    """
+    if denominator == 0:
+        return 0
+    negative = (numerator < 0) != (denominator < 0)
+    n, d = abs(numerator), abs(denominator)
+    magnitude = (2 * n + d) // (2 * d)
+    return -magnitude if negative else magnitude
+
+
 @dataclass(frozen=True)
 class FeeRule:
     """How a fee is computed for one payment method.
@@ -52,10 +77,10 @@ class FeeRule:
     label: str = ""
 
     def fee_on(self, gross_minor: int) -> int:
-        return round(gross_minor * self.percent_bps / BPS) + self.fixed_minor
+        return _div_round_half_up(gross_minor * self.percent_bps, BPS) + self.fixed_minor
 
     def tax_on(self, fee_minor: int) -> int:
-        return round(fee_minor * self.tax_bps / BPS)
+        return _div_round_half_up(fee_minor * self.tax_bps, BPS)
 
     def describe(self) -> str:
         bits = []
@@ -94,7 +119,7 @@ class FeeSchedule:
         return self.rules.get(key) or self.rules.get("default") or FeeRule()
 
     def tds_on(self, gross_minor: int) -> int:
-        return round(gross_minor * self.tds_bps / BPS) if self.tds_bps else 0
+        return _div_round_half_up(gross_minor * self.tds_bps, BPS) if self.tds_bps else 0
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> FeeSchedule:
