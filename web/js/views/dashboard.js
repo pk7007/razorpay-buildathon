@@ -90,11 +90,15 @@ export async function dashboard(root, ctx) {
         note: "booked, never reached the bank",
       }),
       metric({
-        k: "Open exceptions", v: num(summary.open_count || 0),
+        /* open_count folds "investigating" in — it is the size of the queue,
+           not the count of untouched rows. The worklist says "Unresolved" for
+           the same number; the two screens have to agree. */
+        k: "Unresolved", v: num(summary.open_count || 0),
         tone: summary.open_count ? "warn" : "ok",
         note: summary.carried_forward
           ? `${summary.carried_forward} carried forward`
-          : "nothing carried forward",
+          : `${(summary.by_status || {}).open || 0} open, `
+            + `${(summary.by_status || {}).investigating || 0} being investigated`,
       }),
       metric({
         k: "Value at stake", v: moneyShort(summary.open_value_minor || 0, ccy),
