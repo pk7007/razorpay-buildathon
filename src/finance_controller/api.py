@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import mimetypes
+import threading
 import time
 import uuid
 from collections import deque
@@ -46,6 +47,30 @@ log = logging.getLogger("finance_controller")
 
 # cached because both are pure and expensive enough to matter on a demo box
 _CACHE: dict[str, object] = {}
+_CACHE_LOCKS: dict[str, threading.Lock] = {}
+_CACHE_GUARD = threading.Lock()
+
+
+def _cached(key: str, produce):
+    """Compute once, however many callers arrive at once.
+
+    `/api/evaluation` runs fifteen reconciliations and `/api/benchmark` runs
+    three large ones. Both were memoised with a bare `if key not in _CACHE`,
+    which is not a cache on a cold instance -- it is a stampede: four concurrent
+    first requests each paid the full cost (measured at 3.7s wall against 0.7s
+    for one), and this endpoint needs no credentials to call.
+
+    FastAPI runs sync endpoints in a threadpool, so a threading.Lock is the right
+    primitive. The double check means the fast path stays lock-free once warm.
+    """
+    if key in _CACHE:
+        return _CACHE[key]
+    with _CACHE_GUARD:
+        lock = _CACHE_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        if key not in _CACHE:                       # someone else may have won
+            _CACHE[key] = produce()
+    return _CACHE[key]
 
 _STORE: Store | None = None
 
@@ -102,10 +127,19 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 # --------------------------------------------------------------------------- limits
 
 _MAX_FILE_BYTES = 8_000_000
-_MAX_ROWS = 100_000
+# 50k rows across all six files. The reconciliation runs synchronously inside
+# the request -- there is no job queue and no background worker, because the
+# whole product is one process with no infrastructure to configure -- so the cap
+# is set by what finishes inside a normal proxy timeout rather than by what the
+# engine can eventually chew through. Measured on the build machine: 50k rows
+# lands at ~13s, 100k at ~35s, which is past Render's 30s default and would show
+# a merchant a 502 while the server was still working. One merchant-month is
+# typically a few thousand rows per source.
+_MAX_ROWS = 50_000
 _RATE_LIMIT = 30           # requests
 _RATE_WINDOW = 60.0        # seconds
 _hits: dict[str, deque[float]] = {}
+_EXPENSIVE_READS = frozenset({"/api/evaluation", "/api/benchmark"})
 
 
 def _rate_limited(client: str) -> bool:
@@ -131,7 +165,15 @@ async def _observability(request: Request, call_next):
     rid = uuid.uuid4().hex[:8]
     started = time.perf_counter()
 
-    if request.url.path.startswith("/api/") and request.method == "POST":
+    # Every POST does real work, and so do two GETs: /api/evaluation reruns the
+    # held-out sweep and /api/benchmark reconciles 26,000 records. Limiting only
+    # POST left the two most expensive endpoints in the service open to anyone
+    # who could send a GET.
+    costly = (
+        request.method == "POST"
+        or request.url.path in _EXPENSIVE_READS
+    )
+    if request.url.path.startswith("/api/") and costly:
         client = request.client.host if request.client else "unknown"
         if _rate_limited(client):
             log.warning("rid=%s rate-limited client=%s", rid, client)
@@ -262,35 +304,54 @@ async def reconcile_upload(
     }
     if not any(files.values()):
         raise HTTPException(400, "upload at least one file")
-    rows: dict = {}
-    total = 0
+
+    # Two passes. The first only parses and counts, because the row cap has to be
+    # decided BEFORE the expensive work: column detection, mapping and validation
+    # are O(rows x columns), and doing them on a 100k-row file only to reject it
+    # afterwards hands an attacker a cheap way to burn CPU. Counting *raw* rows
+    # rather than surviving ones closes the same hole from the other side -- a
+    # file of mostly-invalid rows used to slip under a cap that counted only the
+    # rows that passed.
+    parsed_by_source: dict[str, list[dict]] = {}
+    names: dict[str, str] = {}
+    raw_total = 0
     for source, up in files.items():
         if up is None:
-            rows[source] = []
+            parsed_by_source[source] = []
             continue
+        name = _safe_name(up.filename)
+        names[source] = name
         blob = await up.read()
         if len(blob) > _MAX_FILE_BYTES:
-            raise HTTPException(413, f"{_safe_name(up.filename)} exceeds 8 MB")
+            raise HTTPException(413, f"{name} exceeds 8 MB")
         try:
             parsed = parse_bytes(up.filename or f"{source}.csv", blob)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                422, f"could not parse {_safe_name(up.filename)}: {type(exc).__name__}"
+                422, f"could not parse {name}: {type(exc).__name__}"
             ) from exc
         if not isinstance(parsed, list):
-            raise HTTPException(422, f"{_safe_name(up.filename)} is not a list of rows")
+            raise HTTPException(422, f"{name} is not a list of rows")
+        raw_total += len(parsed)
+        if raw_total > _MAX_ROWS:
+            raise HTTPException(
+                413,
+                f"{raw_total} rows exceeds the {_MAX_ROWS}-row limit. Split the "
+                f"file by period and reconcile one batch at a time.",
+            )
+        parsed_by_source[source] = parsed
 
-        # Uploaded files carry whatever column names the bank chose, so they go
-        # through the same detect -> map -> validate path that /api/ingest/preview
-        # shows the caller. Skipping it here would make the preview a promise the
-        # run does not keep: every amount would normalize to zero and the engine
-        # would then "match" rows worth nothing at all.
-        rows[source] = _map_and_validate(source, parsed, _safe_name(up.filename))
+    # Second pass, now that the size is known to be sane. Uploaded files carry
+    # whatever column names the bank chose, so they go through the same
+    # detect -> map -> validate path that /api/ingest/preview shows the caller.
+    # Skipping it here would make the preview a promise the run does not keep.
+    rows: dict = {}
+    total = 0
+    for source, parsed in parsed_by_source.items():
+        rows[source] = _map_and_validate(source, parsed, names.get(source, source))
         total += len(rows[source])
     if total == 0:
         raise HTTPException(422, "no usable rows found in the uploaded files")
-    if total > _MAX_ROWS:
-        raise HTTPException(413, f"{total} rows exceeds the {_MAX_ROWS}-row limit")
     return _reconcile_and_record(rows, "upload")
 
 
@@ -311,17 +372,15 @@ def _map_and_validate(source: str, parsed: list[dict], name: str) -> list[dict]:
 def evaluation() -> dict:
     """Dev-vs-held-out accuracy. The numbers the README quotes, served live so a
     reader can check the claim against the running code."""
-    if "evaluation" not in _CACHE:
-        _CACHE["evaluation"] = holdout_report()
-    return _CACHE["evaluation"]  # type: ignore[return-value]
+    return _cached("evaluation", holdout_report)  # type: ignore[return-value]
 
 
 @app.get("/api/benchmark")
 def throughput() -> dict:
     """Throughput at increasing batch sizes — the other half of the Track 4 bar."""
-    if "benchmark" not in _CACHE:
-        _CACHE["benchmark"] = benchmark((1_000, 5_000, 20_000))
-    return _CACHE["benchmark"]  # type: ignore[return-value]
+    return _cached(  # type: ignore[return-value]
+        "benchmark", lambda: benchmark((1_000, 5_000, 20_000))
+    )
 
 
 def _bundled_rows(name: str):

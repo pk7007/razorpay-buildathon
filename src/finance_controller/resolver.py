@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+from bisect import bisect_right
 
 from .audit import AuditLog
 from .config import SETTINGS
@@ -61,6 +62,46 @@ def resolve(
 # --------------------------------------------------------------------------- heuristic
 
 
+# A pair is only worth scoring if the amounts are close enough to survive
+# `_pair_score`. Finding those pairs by comparing everything to everything is
+# O(n^2): 6,000 residual entries took 3.5 seconds and 20,000 took a minute, so
+# one uploaded month with a large unmatched tail could hang the server. The
+# candidates are now found by binary search over sorted amounts, which is
+# O(n log n) plus the number of pairs that were actually plausible.
+_MAX_PAIR_CANDIDATES = 40
+
+
+def _candidate_pairs(residual: list[Entry], tol: int):
+    """Yield (a, b) pairs whose amounts are close enough to be worth scoring.
+
+    Blocked by currency first -- the scorer refuses cross-currency pairs anyway,
+    so comparing them is wasted work -- then windowed by amount.
+
+    The per-entry cap is not only a performance guard. If more than
+    `_MAX_PAIR_CANDIDATES` entries sit inside one amount window, that amount is
+    so common in this batch that it carries no identifying information, and any
+    pair chosen from the crowd would be a guess. Refusing is the same answer the
+    structural rules give to an ambiguous subset.
+    """
+    by_currency: dict[str, list[Entry]] = {}
+    for e in residual:
+        by_currency.setdefault(e.currency, []).append(e)
+
+    for bucket in by_currency.values():
+        bucket.sort(key=lambda e: e.amount_paise)
+        amounts = [e.amount_paise for e in bucket]
+        for i, a in enumerate(bucket):
+            # the widest gap `_pair_score` will still consider
+            band = max(tol * 20, abs(a.amount_paise) * 3 // 100)
+            hi = bisect_right(amounts, a.amount_paise + band, i + 1)
+            window = bucket[i + 1: hi]
+            if len(window) > _MAX_PAIR_CANDIDATES:
+                continue
+            for b in window:
+                if a.source != b.source:
+                    yield a, b
+
+
 def _heuristic_resolve(
     residual: list[Entry], audit: AuditLog
 ) -> tuple[list[MatchGroup], list[Entry], dict]:
@@ -70,14 +111,12 @@ def _heuristic_resolve(
     groups: list[MatchGroup] = []
 
     scored: list[tuple[float, Entry, Entry, str]] = []
-    for i, a in enumerate(residual):
-        for b in residual[i + 1 :]:
-            if a.source == b.source:
-                continue
-            s, why = _pair_score(a, b, tol)
-            if s >= thr:
-                scored.append((s, a, b, why))
-    scored.sort(key=lambda t: -t[0])
+    for a, b in _candidate_pairs(residual, tol):
+        s, why = _pair_score(a, b, tol)
+        if s >= thr:
+            scored.append((s, a, b, why))
+    # ties broken by id so a run is reproducible regardless of dict ordering
+    scored.sort(key=lambda t: (-t[0], t[1].id, t[2].id))
 
     n = 0
     for s, a, b, why in scored:

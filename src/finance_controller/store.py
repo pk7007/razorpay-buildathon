@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -125,6 +126,58 @@ PRIORITIES = ("low", "medium", "high", "critical")
 _HIGH_VALUE_CATEGORIES = {"missing_in_bank", "over_refunded", "orphan_chargeback"}
 
 
+class _LockedConnection:
+    """Runs one statement on the shared connection while holding its lock."""
+
+    __slots__ = ("_conn", "_lock")
+
+    def __init__(self, conn: sqlite3.Connection, lock) -> None:
+        self._conn = conn
+        self._lock = lock
+
+    def execute(self, *args, **kwargs):
+        with self._lock:
+            cur = self._conn.execute(*args, **kwargs)
+            # drain inside the lock: a cursor left open across threads is what
+            # produced "another row available"
+            rows = cur.fetchall()
+        return _Rows(rows)
+
+    def executemany(self, *args, **kwargs):
+        with self._lock:
+            self._conn.executemany(*args, **kwargs)
+
+    def commit(self):
+        with self._lock:
+            self._conn.commit()
+
+    def rollback(self):
+        with self._lock:
+            self._conn.rollback()
+
+    def close(self):
+        with self._lock:
+            self._conn.close()
+
+
+class _Rows:
+    """A drained result set that still quacks like a cursor."""
+
+    __slots__ = ("_rows",)
+
+    def __init__(self, rows) -> None:
+        self._rows = rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
 class WorkflowError(ValueError):
     """An illegal state transition or unknown value."""
 
@@ -143,23 +196,60 @@ class Store:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(DDL)
-        if not self._conn.execute("SELECT 1 FROM schema_meta").fetchone():
-            self._conn.execute("INSERT INTO schema_meta(version) VALUES (?)", (SCHEMA_VERSION,))
-        self._conn.commit()
+        # One connection shared across threads needs a lock, and `check_same_thread
+        # =False` only silences the guard that would otherwise say so. Two threads
+        # interleaving execute() on one connection trample each other's cursor
+        # state: concurrent set_status() calls raised
+        # `sqlite3.DatabaseError: another row available` and left the history
+        # half-written. uvicorn runs sync endpoints in a threadpool, so two people
+        # working the same queue is the normal case, not an edge one.
+        #
+        # A single lock rather than a connection pool because SQLite serialises
+        # writers anyway: a pool would add contention on the same file lock and
+        # buy nothing for a single-process service.
+        self._lock = threading.RLock()
+        with self._lock:
+            self._conn.executescript(DDL)
+            if not self._conn.execute("SELECT 1 FROM schema_meta").fetchone():
+                self._conn.execute(
+                    "INSERT INTO schema_meta(version) VALUES (?)", (SCHEMA_VERSION,)
+                )
+            self._conn.commit()
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
+
+    def _locked_conn(self) -> sqlite3.Connection:
+        """The shared connection, for a single statement executed under the lock.
+
+        `sqlite3.Connection.execute` runs the whole statement before returning
+        its cursor, so holding the lock for the call is enough to keep two
+        threads from interleaving inside one statement.
+        """
+        return _LockedConnection(self._conn, self._lock)
+
+    @contextmanager
+    def _read(self) -> Iterator[sqlite3.Connection]:
+        """Serialised read access to the shared connection."""
+        with self._lock:
+            yield self._conn
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
-        """One transaction. Either the whole run persists or none of it does."""
-        try:
-            yield self._conn
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+        """One transaction. Either the whole run persists or none of it does.
+
+        Re-entrant: `record_run` opens a transaction and calls helpers that read
+        through `_read`, and an ordinary Lock would deadlock on the second
+        acquire.
+        """
+        with self._lock:
+            try:
+                yield self._conn
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     # ----------------------------------------------------------------- runs
 
@@ -269,13 +359,13 @@ class Store:
                  body=f"run {run_id} matched this entry; no longer an exception")
 
     def list_runs(self, limit: int = 50) -> list[dict]:
-        rows = self._conn.execute(
+        rows = self._locked_conn().execute(
             "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (limit,)
         ).fetchall()
         return [_run_row(r) for r in rows]
 
     def get_run(self, run_id: str) -> dict | None:
-        row = self._conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        row = self._locked_conn().execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
         return _run_row(row) if row else None
 
     # ------------------------------------------------------------ exceptions
@@ -332,10 +422,10 @@ class Store:
         } else "amount_minor"
         direction = "ASC" if str(order).lower() == "asc" else "DESC"
 
-        total = self._conn.execute(
+        total = self._locked_conn().execute(
             f"SELECT COUNT(*) c FROM exceptions {clause}", args
         ).fetchone()["c"]
-        rows = self._conn.execute(
+        rows = self._locked_conn().execute(
             f"SELECT * FROM exceptions {clause} ORDER BY {sort_col} {direction} LIMIT ? OFFSET ?",
             [*args, limit, offset],
         ).fetchall()
@@ -347,12 +437,14 @@ class Store:
         }
 
     def get_exception(self, exc_id: str) -> dict | None:
-        row = self._conn.execute("SELECT * FROM exceptions WHERE id=?", (exc_id,)).fetchone()
+        row = self._locked_conn().execute(
+            "SELECT * FROM exceptions WHERE id=?", (exc_id,)
+        ).fetchone()
         if not row:
             return None
         out = _exc_row(row)
         out["history"] = [
-            dict(r) for r in self._conn.execute(
+            dict(r) for r in self._locked_conn().execute(
                 "SELECT at, actor, kind, from_status, to_status, body "
                 "FROM exception_events WHERE exception_id=? ORDER BY id",
                 (exc_id,),
@@ -364,7 +456,7 @@ class Store:
         self, exc_id: str, to_status: str, *, actor: str = "user",
         reason: str | None = None,
     ) -> dict:
-        row = self._conn.execute(
+        row = self._locked_conn().execute(
             "SELECT status FROM exceptions WHERE id=?", (exc_id,)
         ).fetchone()
         if row is None:
@@ -391,7 +483,7 @@ class Store:
         return self.get_exception(exc_id)  # type: ignore[return-value]
 
     def add_note(self, exc_id: str, body: str, *, actor: str = "user") -> dict:
-        if not self._conn.execute(
+        if not self._locked_conn().execute(
             "SELECT 1 FROM exceptions WHERE id=?", (exc_id,)
         ).fetchone():
             raise WorkflowError(f"no such exception {exc_id}")
@@ -405,7 +497,7 @@ class Store:
         return self.get_exception(exc_id)  # type: ignore[return-value]
 
     def assign(self, exc_id: str, assignee: str | None, *, actor: str = "user") -> dict:
-        if not self._conn.execute(
+        if not self._locked_conn().execute(
             "SELECT 1 FROM exceptions WHERE id=?", (exc_id,)
         ).fetchone():
             raise WorkflowError(f"no such exception {exc_id}")
@@ -421,22 +513,22 @@ class Store:
 
     def queue_summary(self) -> dict:
         by_status = {
-            r["status"]: r["c"] for r in self._conn.execute(
+            r["status"]: r["c"] for r in self._locked_conn().execute(
                 "SELECT status, COUNT(*) c FROM exceptions GROUP BY status"
             )
         }
         by_category = {
-            r["category"]: r["c"] for r in self._conn.execute(
+            r["category"]: r["c"] for r in self._locked_conn().execute(
                 "SELECT category, COUNT(*) c FROM exceptions "
                 "WHERE status IN ('open','investigating') GROUP BY category "
                 "ORDER BY c DESC"
             )
         }
-        open_value = self._conn.execute(
+        open_value = self._locked_conn().execute(
             "SELECT COALESCE(SUM(amount_minor),0) v FROM exceptions "
             "WHERE status IN ('open','investigating')"
         ).fetchone()["v"]
-        aging = self._conn.execute(
+        aging = self._locked_conn().execute(
             "SELECT COUNT(*) c FROM exceptions "
             "WHERE status IN ('open','investigating') AND times_seen > 1"
         ).fetchone()["c"]
