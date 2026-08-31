@@ -1,0 +1,9 @@
+{
+  "name": "ai-finance-controller-web",
+  "private": true,
+  "type": "module",
+  "description": "Marks web/ as ES modules so Node's built-in test runner can import the same files the browser does. There are no dependencies, no lockfile, no node_modules and no build step: run `node --test web/tests/`.",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}

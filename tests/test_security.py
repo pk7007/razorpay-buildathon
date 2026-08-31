@@ -86,7 +86,11 @@ def test_security_headers_present_on_html(client):
 def test_health_does_not_leak_secrets(client):
     body = client.get("/api/health").json()
     # it may say WHETHER a key is configured, never anything derived from one
-    assert set(body) == {"status", "version", "resolver", "razorpay_configured", "datasets"}
+    # An allowlist, not a subset check: adding a field here has to be a
+    # deliberate act, so a secret cannot arrive by accident. Every entry says
+    # WHETHER something is configured, never anything derived from its value.
+    assert set(body) == {"status", "version", "resolver", "razorpay_configured",
+                         "writes_require_token", "datasets"}
     assert isinstance(body["razorpay_configured"], bool)
     assert "key" not in str(body).lower()
 
@@ -190,3 +194,73 @@ def test_a_json_body_has_a_size_limit(client):
     assert r.status_code == 413, f"{r.status_code}: {r.text[:120]}"
     assert "MB" in r.json()["detail"]
     api._hits.clear()
+
+
+# --------------------------------------------------------------------------- #
+# Optional write protection
+# --------------------------------------------------------------------------- #
+
+
+def _token_client(monkeypatch, token="s3cret-token"):
+    """A client on an instance that has RECON_API_TOKEN set."""
+    import dataclasses
+
+    from finance_controller.config import SETTINGS
+    monkeypatch.setattr(api, "SETTINGS", dataclasses.replace(SETTINGS, api_token=token))
+    return token
+
+
+def test_by_default_the_service_is_open(client):
+    """No token configured is the local-demo default and must stay frictionless."""
+    api._hits.clear()
+    assert client.get("/api/health").json()["writes_require_token"] is False
+    assert client.post("/api/reconcile", json={"dataset": "demo"}).status_code == 200
+    api._hits.clear()
+
+
+def test_with_a_token_set_writes_are_refused_without_it(client, monkeypatch):
+    token = _token_client(monkeypatch)
+    api._hits.clear()
+
+    for method, path, body in [
+        ("POST", "/api/reconcile", {"dataset": "demo"}),
+        ("POST", "/api/reconcile/scenarios", {}),
+    ]:
+        api._hits.clear()
+        r = client.request(method, path, json=body)
+        assert r.status_code == 401, f"{method} {path} -> {r.status_code}"
+        assert "X-API-Token" in r.json()["detail"]
+
+    # and accepted with it
+    api._hits.clear()
+    r = client.post("/api/reconcile", json={"dataset": "demo"},
+                    headers={"X-API-Token": token})
+    assert r.status_code == 200, r.text
+    api._hits.clear()
+
+
+def test_a_wrong_token_is_refused(client, monkeypatch):
+    _token_client(monkeypatch)
+    api._hits.clear()
+    r = client.post("/api/reconcile", json={"dataset": "demo"},
+                    headers={"X-API-Token": "not-the-token"})
+    assert r.status_code == 401
+    api._hits.clear()
+
+
+def test_reads_stay_open_so_a_dashboard_is_still_shareable(client, monkeypatch):
+    _token_client(monkeypatch)
+    api._hits.clear()
+    for path in ("/api/health", "/api/datasets", "/api/runs", "/api/exceptions",
+                 "/api/exceptions/summary"):
+        assert client.get(path).status_code == 200, path
+    api._hits.clear()
+
+
+def test_the_token_is_compared_without_leaking_its_length(monkeypatch):
+    """A plain == on a secret leaks timing. This pins the constant-time compare."""
+    import inspect
+    src = inspect.getsource(api)
+    assert "secrets.compare_digest" in src, (
+        "the token is compared with == somewhere, which is timing-attackable"
+    )

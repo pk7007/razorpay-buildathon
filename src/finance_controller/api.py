@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import mimetypes
+import secrets
 import threading
 import time
 import uuid
@@ -143,6 +144,18 @@ _hits: dict[str, deque[float]] = {}
 _EXPENSIVE_READS = frozenset({"/api/evaluation", "/api/benchmark"})
 
 
+def _is_mutation(request: Request) -> bool:
+    """A request that changes stored state.
+
+    POST /api/reconcile* writes a run and reconciles the queue against it, so it
+    counts even though it reads like a query.
+    """
+    return (
+        request.url.path.startswith("/api/")
+        and request.method in ("POST", "PATCH", "PUT", "DELETE")
+    )
+
+
 def _rate_limited(client: str) -> bool:
     """Fixed-window-per-client limiter.
 
@@ -165,6 +178,27 @@ async def _observability(request: Request, call_next):
     """Request id, timing, structured log line, and a last-resort error handler."""
     rid = uuid.uuid4().hex[:8]
     started = time.perf_counter()
+
+    # Optional shared-secret gate on everything that changes state.
+    #
+    # There is no login and no user model: this is a single-tenant tool, and a
+    # sign-in screen would have cost reconciliation work while buying a judge
+    # nothing. But "no auth at all" is the wrong default the moment the service
+    # is reachable from anywhere but a laptop, because closing an exception is a
+    # write to a financial record. So: unset RECON_API_TOKEN and nothing changes
+    # (the demo works as before); set it and every mutating request must carry
+    # it. Reads stay open either way, so the dashboard is still shareable.
+    if SETTINGS.requires_token and _is_mutation(request):
+        supplied = request.headers.get("x-api-token") or ""
+        if not secrets.compare_digest(supplied, SETTINGS.api_token):
+            log.warning("rid=%s rejected unauthenticated %s %s",
+                        rid, request.method, request.url.path)
+            return JSONResponse(
+                {"detail": "this instance requires an API token for changes; "
+                           "send it as the X-API-Token header",
+                 "request_id": rid},
+                status_code=401,
+            )
 
     # A JSON body has no size limit of its own -- only uploads were capped -- so
     # a single POST could ask the server to buffer an arbitrary amount of memory
@@ -253,6 +287,7 @@ def health() -> dict:
         "status": "ok",
         "version": app.version,
         "resolver": "llm" if SETTINGS.has_llm else "heuristic",
+        "writes_require_token": SETTINGS.requires_token,
         "razorpay_configured": SETTINGS.has_razorpay,
         "datasets": available_datasets(),
     }

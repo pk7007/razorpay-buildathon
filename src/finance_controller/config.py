@@ -29,6 +29,10 @@ class Settings:
     razorpay_key_secret: str = os.getenv("RAZORPAY_KEY_SECRET", "")
 
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+    # Optional shared secret. Unset (the default) leaves the service open, which
+    # is what a local demo wants. Set it and every state-changing request must
+    # present it -- see `requires_token`.
+    api_token: str = os.getenv("RECON_API_TOKEN", "")
     llm_model: str = os.getenv("LLM_MODEL", "claude-sonnet-5")
     # USD per 1M tokens — override if you point at a different model.
     llm_input_usd_per_mtok: float = _float("LLM_INPUT_USD_PER_MTOK", 3.0)
@@ -50,6 +54,10 @@ class Settings:
     @property
     def has_llm(self) -> bool:
         return bool(self.anthropic_api_key)
+
+    @property
+    def requires_token(self) -> bool:
+        return bool(self.api_token)
 
     @property
     def has_razorpay(self) -> bool:

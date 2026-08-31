@@ -6,7 +6,7 @@ Built for the **[Razorpay AI Buildathon](https://razorpay.com/buildathon/) — T
 
 [![ci](https://github.com/pk7007/razorpay-buildathon/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pk7007/razorpay-buildathon/actions/workflows/ci.yml)
 
-Python 3.11 · FastAPI · SQLite · MIT · 896 tests
+Python 3.11 · FastAPI · SQLite · MIT · 898 + 35 tests
 
 | held-out precision | held-out recall | ₹ in wrong groups | throughput | replay |
 | --- | --- | --- | --- | --- |
@@ -320,10 +320,11 @@ razorpay-buildathon/
 ├── web/                        the console — 6 screens, no build step
 │   ├── styles/                 design tokens, shell, components
 │   ├── js/views/               dashboard, reconcile, worklist, runs, import, accuracy
-│   └── fonts/                  IBM Plex, self-hosted (the CSP allows no external origin)
+│   ├── fonts/                  IBM Plex, self-hosted (the CSP allows no external origin)
+│   └── tests/                  35 frontend tests — `node --test web/tests/`
 ├── data/datasets/              demo month + 3 benchmark datasets + answer keys
 ├── scripts/                    CLI, dataset generator, demo_reset, verify_razorpay, verify_llm
-├── tests/                      896 tests
+├── tests/                      898 python tests
 │   ├── test_financial_correctness.py   the settlement identity vs an independent oracle
 │   ├── test_adversarial.py             attempts to make the matcher confidently wrong
 │   ├── test_ai_boundary.py             the model never sees what rules already decided
@@ -422,7 +423,8 @@ rows.
 ## Testing
 
 ```bash
-python -m pytest -q              # 896 tests
+python -m pytest -q              # 898 tests
+node --test web/tests/           # 35 frontend tests, no node_modules
 python -m pytest -q -m slow      # + throughput benchmark
 python -m ruff check .           # lint
 ```
@@ -539,13 +541,15 @@ Stated plainly rather than buried:
   machine). CI builds the image, starts the container and reconciles a dataset
   through it on every push to `main` — the `docker build · run · reconcile` job
   is green, so the image is verified, just not by hand here.
-- **There is no authentication.** Anyone who can reach the port can read the
-  worklist and close exceptions. That is a deliberate scope choice for a
-  single-tenant demo — adding a login would have bought a judge nothing and cost
-  the reconciliation work — but it is the first thing to add before this touches
-  a real merchant's data. The API is same-origin only (no CORS), rate limited,
-  and ships a `default-src 'self'` CSP, so the surface is small; it is still
-  unauthenticated.
+- **There is no user model.** Set `RECON_API_TOKEN` and every state-changing
+  request — running a reconciliation, closing an exception, adding a note —
+  must send it as `X-API-Token`; reads stay open so a deployed dashboard is
+  still shareable. Unset, which is the default, the service is open, and that
+  is what a local demo wants. What there is *not* is a login, per-user
+  identity, or authorization: the audit trail records whatever `actor` the
+  caller claims. That is the first thing to build before this touches a real
+  merchant's data. The rest of the surface is small — same-origin only (no
+  CORS), rate limited, input-capped, `default-src 'self'`.
 - **The exception queue is ephemeral in a container.** The engine is stateless
   and deterministic, so a restart costs nothing there. The queue is SQLite at
   `RECON_DB_PATH`, which on a free Render instance or a volume-less `docker run`

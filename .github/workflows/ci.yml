@@ -35,6 +35,17 @@ jobs:
       - name: Tests
         run: python -m pytest -q
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Frontend tests
+        # Node's built-in runner over the same ES modules the browser loads.
+        # No dependencies, no lockfile, no node_modules — the "no build step"
+        # promise holds, and the money formatter is no longer only checked by
+        # someone looking at a screen.
+        run: node --test web/tests/
+
       - name: Held-out accuracy gate
         # fails the build if generalisation regresses, so the README's numbers
         # cannot silently drift away from reality

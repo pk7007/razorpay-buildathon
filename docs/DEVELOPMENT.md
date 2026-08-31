@@ -37,7 +37,8 @@ python scripts/run_reconciliation.py --benchmark     # throughput
 ## Tests
 
 ```bash
-python -m pytest -q              # 896 tests
+python -m pytest -q              # 898 tests
+node --test web/tests/           # 35 frontend tests, no node_modules
 python -m pytest -q -m slow      # + the throughput benchmark
 python -m ruff check .           # lint
 python -m ruff check --fix .

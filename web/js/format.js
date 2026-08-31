@@ -15,7 +15,12 @@ export function money(minor, ccy = "INR", { decimals = true } = {}) {
   const c = (ccy || "INR").toUpperCase();
   const div = minorUnits(c);
   const value = (minor || 0) / div;
-  const frac = div > 1 && decimals ? 2 : 0;
+  // Decimal places come from the currency's own minor unit, not a hardcoded 2.
+  // The dinar and the Bahraini dinar have 1000 fils, so 1234 fils is 1.234 —
+  // formatting it to two places silently dropped a fils. The engine reconciles
+  // in integer minor units and got it right; only the display was wrong, which
+  // is the worst place for it to be wrong in a tool people read numbers off.
+  const frac = decimals ? Math.round(Math.log10(div)) : 0;
   try {
     return new Intl.NumberFormat(LOCALE[c] || "en-US", {
       style: "currency", currency: c,
