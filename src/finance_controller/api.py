@@ -127,6 +127,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 # --------------------------------------------------------------------------- limits
 
 _MAX_FILE_BYTES = 8_000_000
+_MAX_JSON_BYTES = 1_000_000
 # 50k rows across all six files. The reconciliation runs synchronously inside
 # the request -- there is no job queue and no background worker, because the
 # whole product is one process with no infrastructure to configure -- so the cap
@@ -164,6 +165,21 @@ async def _observability(request: Request, call_next):
     """Request id, timing, structured log line, and a last-resort error handler."""
     rid = uuid.uuid4().hex[:8]
     started = time.perf_counter()
+
+    # A JSON body has no size limit of its own -- only uploads were capped -- so
+    # a single POST could ask the server to buffer an arbitrary amount of memory
+    # before any handler saw it. Multipart is excluded here because the upload
+    # endpoint enforces its own, larger, per-file cap.
+    if request.method in ("POST", "PATCH", "PUT"):
+        declared = request.headers.get("content-length")
+        content_type = request.headers.get("content-type", "")
+        cap = _MAX_FILE_BYTES * 6 if "multipart/" in content_type else _MAX_JSON_BYTES
+        if declared and declared.isdigit() and int(declared) > cap:
+            return JSONResponse(
+                {"detail": f"request body exceeds {cap // 1_000_000} MB",
+                 "request_id": rid},
+                status_code=413,
+            )
 
     # Every POST does real work, and so do two GETs: /api/evaluation reruns the
     # held-out sweep and /api/benchmark reconciles 26,000 records. Limiting only

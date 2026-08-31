@@ -147,3 +147,46 @@ def test_a_cold_cache_is_computed_once_not_once_per_caller(client):
         f"one — each caller is recomputing instead of sharing the result"
     )
     api._hits.clear()
+
+
+def test_free_text_fields_are_bounded_and_say_so(client):
+    """A 100,000-character note used to be written straight into SQLite.
+
+    Refused rather than truncated: a resolution reason cut off mid-sentence
+    still looks like a complete record months later, which is a worse failure
+    for an auditable log than telling the writer to shorten it now.
+    """
+    api._hits.clear()
+    client.post("/api/reconcile", json={"dataset": "demo"})
+    api._hits.clear()
+    eid = client.get("/api/exceptions?limit=1").json()["items"][0]["id"]
+
+    for method, path, payload, field in [
+        ("POST", f"/api/exceptions/{eid}/notes", {"body": "z" * 100_000}, "body"),
+        ("PATCH", f"/api/exceptions/{eid}", {"assignee": "x" * 5_000}, "assignee"),
+        ("PATCH", f"/api/exceptions/{eid}",
+         {"status": "investigating", "reason": "y" * 100_000}, "reason"),
+    ]:
+        api._hits.clear()
+        r = client.request(method, path, json=payload)
+        assert r.status_code == 422, f"{field}: {r.status_code}"
+        detail = r.json()["detail"]
+        assert field in detail and "limit" in detail, detail
+
+    # and ordinary input is untouched
+    api._hits.clear()
+    r = client.post(f"/api/exceptions/{eid}/notes", json={"body": "Called the bank."})
+    assert r.status_code == 200
+    api._hits.clear()
+
+
+def test_a_json_body_has_a_size_limit(client):
+    """Only uploads were capped, so one POST could ask the server to buffer an
+    arbitrary amount of memory before any handler saw it."""
+    api._hits.clear()
+    blob = b'{"dataset":"' + b"a" * 2_000_000 + b'"}'
+    r = client.post("/api/reconcile", content=blob,
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 413, f"{r.status_code}: {r.text[:120]}"
+    assert "MB" in r.json()["detail"]
+    api._hits.clear()

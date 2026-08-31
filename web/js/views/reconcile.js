@@ -301,12 +301,37 @@ function sourcePips(sources) {
 
 function showGroup(g, entries, ccy) {
   const members = g.entry_ids.map((id) => entries[id]).filter(Boolean);
+  const deductions = members.filter((e) => e.source === "refund" || e.source === "chargeback");
+  const deducted = deductions.reduce((sum, e) => sum + Math.abs(e.amount_paise), 0);
+
   const body = el("div", { class: "stack gap-4" },
     el("div", { class: "kv" },
-      kvBox("Amount", money(g.amount_paise, ccy)),
+      kvBox("Sale", money(g.amount_paise, ccy)),
       kvBox("Status", groupTone(g.status)[1]),
       kvBox("Stage", label(g.stage)),
       kvBox("Confidence", pct(g.confidence, 0))),
+
+    /* A refunded sale has two grosses: what was sold, and what was left to pay
+       out. Showing only the first put ₹8,000 at the top of a panel whose
+       arithmetic underneath starts from ₹5,000 — the two numbers are both
+       right and the reader has no way to see why they differ. */
+    deducted
+      ? el("div", { class: "ledger" },
+          el("div", { class: "ledger-row" },
+            el("span", { class: "grow", text: "Sale" }),
+            el("span", { class: "amt", text: money(g.amount_paise, ccy) })),
+          ...deductions.map((e) =>
+            el("div", { class: "ledger-row" },
+              el("span", { class: "grow" },
+                `less ${e.source} `,
+                el("span", { class: "id", text: e.id })),
+              el("span", { class: "amt", text: money(-Math.abs(e.amount_paise), ccy) }))),
+          el("div", { class: "ledger-row is-total" },
+            el("span", { class: "grow", text: "Gross that had to settle" }),
+            el("span", { class: "amt",
+                         text: money(g.amount_paise - deducted, ccy) })))
+      : null,
+
     el("div", {},
       el("h4", { class: "metric-k", style: { marginBottom: "6px" }, text: "Why these belong together" }),
       el("div", { class: "rule-why", text: g.rationale }),

@@ -91,23 +91,44 @@ def get_exception(exc_id: str) -> dict:
     return exc
 
 
+# Free text written into the audit trail. Refused rather than truncated when it
+# is too long: a resolution reason cut off mid-sentence still *looks* like a
+# complete record months later, which is a worse failure for an auditable log
+# than telling the writer to shorten it now.
+_LIMITS = {"actor": 60, "assignee": 120, "reason": 1_000, "body": 4_000}
+
+
+def _text(payload: dict, field: str, default: str | None = None) -> str | None:
+    value = payload.get(field, default)
+    if value is None:
+        return None
+    text = str(value)
+    cap = _LIMITS[field]
+    if len(text) > cap:
+        raise HTTPException(
+            422,
+            f"{field} is {len(text)} characters; the limit is {cap}. Shorten it, or "
+            f"put the detail in a note.",
+        )
+    return text
+
+
 @router.patch("/api/exceptions/{exc_id}")
 def update_exception(exc_id: str, payload: dict) -> dict:
     """Change status and/or assignee. The state machine refuses illegal moves."""
     if not isinstance(payload, dict):
         raise HTTPException(422, "expected an object")
     store = _store()
-    actor = str(payload.get("actor") or "user")[:60]
+    actor = _text(payload, "actor", "user") or "user"
     out = None
     try:
         if "assignee" in payload:
-            a = payload["assignee"]
-            out = store.assign(exc_id, str(a)[:60] if a else None, actor=actor)
+            a = _text(payload, "assignee")
+            out = store.assign(exc_id, a or None, actor=actor)
         if payload.get("status"):
-            reason = payload.get("reason")
             out = store.set_status(
-                exc_id, str(payload["status"]), actor=actor,
-                reason=str(reason)[:500] if reason else None,
+                exc_id, str(payload["status"])[:60], actor=actor,
+                reason=_text(payload, "reason"),
             )
     except WorkflowError as exc:
         # an illegal transition is the caller's mistake, not a server fault
@@ -119,12 +140,16 @@ def update_exception(exc_id: str, payload: dict) -> dict:
 
 @router.post("/api/exceptions/{exc_id}/notes")
 def add_note(exc_id: str, payload: dict) -> dict:
-    body = (payload or {}).get("body")
+    payload = payload or {}
+    if not isinstance(payload, dict):
+        raise HTTPException(422, "expected an object")
+    body = payload.get("body")
     if not isinstance(body, str) or not body.strip():
         raise HTTPException(422, "note body is required")
+    body = _text(payload, "body")
     try:
         return _store().add_note(
-            exc_id, body, actor=str((payload or {}).get("actor") or "user")[:60]
+            exc_id, body, actor=_text(payload, "actor", "user") or "user"
         )
     except WorkflowError as exc:
         raise HTTPException(404, str(exc)) from exc
