@@ -197,7 +197,10 @@ export function renderResult(host, result, title, roundtrip) {
     ["exceptions", `Exceptions (${num(result.exceptions.length)})`],
     ["audit", `Audit trail (${num(result.audit.length)})`],
   ];
-  const chips = el("div", { class: "chips", role: "tablist" });
+  /* Toggle buttons, not ARIA tabs. A real `role="tab"` needs `aria-selected`
+     and an id-linked `tabpanel`; half-implemented tab roles announce worse than
+     honest pressed-state buttons. */
+  const chips = el("div", { class: "chips", role: "group", "aria-label": "Result view" });
   const render = {
     groups: () => groupsTable(result, entries, ccy),
     exceptions: () => exceptionsTable(result, ccy),
@@ -212,7 +215,7 @@ export function renderResult(host, result, title, roundtrip) {
   };
   tabs.forEach(([key, text]) => {
     chips.append(el("button", {
-      class: "chip", role: "tab", dataset: { key },
+      class: "chip", dataset: { key },
       "aria-pressed": String(key === current), text,
       onClick: () => select(key),
     }));

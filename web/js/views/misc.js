@@ -1,10 +1,10 @@
 /* Runs history, accuracy evidence, and the import flow. */
 
 import { api } from "../api.js";
-import { money, num, pct, ago, label } from "../format.js";
+import { money, num, pct, ms, ago, date, label } from "../format.js";
 import {
   el, clear, icon, badge, metric, emptyState, errorState,
-  skeletonGrid, skeletonMetrics, toast,
+  skeletonGrid, skeletonMetrics, toast, drawer,
 } from "../ui.js";
 import { renderResult } from "./reconcile.js";
 
@@ -35,6 +35,36 @@ export async function runs(root, ctx) {
     return;
   }
 
+  /* Runs over the same input carry the same digest. Saying so turns a wall of
+     near-identical rows into a useful fact: this batch was reconciled five
+     times and gave the same answer every time. */
+  const digestCounts = list.reduce((acc, r) => {
+    acc[r.source_digest] = (acc[r.source_digest] || 0) + 1;
+    return acc;
+  }, {});
+
+  const rows = list.map((r) => {
+    const tr = el("tr", { dataset: { clickable: "1" }, tabindex: "0" },
+      el("td", {}, el("div", { text: r.dataset }),
+        el("div", { class: "id cell-sub", text: r.id })),
+      /* Deterministic is the norm, so it stays quiet; an LLM-assisted run is
+         the exception and is the one a reader needs to spot. */
+      el("td", {}, badge(r.resolver_mode === "llm" ? "LLM-assisted" : "Deterministic",
+                         r.resolver_mode === "llm" ? "accent" : "neutral",
+                         { dot: false, quiet: r.resolver_mode !== "llm" })),
+      el("td", { class: "amt", text: num(r.entries) }),
+      el("td", { class: "amt", text: num(r.groups) }),
+      el("td", { class: "amt", text: pct(r.auto_match_rate) }),
+      el("td", { class: "amt", text: num(r.exceptions) }),
+      el("td", { class: "cell-sub", text: ago(r.started_at) }));
+    const open = () => showRun(r, digestCounts[r.source_digest]);
+    tr.addEventListener("click", open);
+    tr.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
+    return tr;
+  });
+
   clear(slot).append(el("div", { class: "grid-wrap" },
     el("div", { class: "grid-scroll" },
       el("table", { class: "grid" },
@@ -43,22 +73,92 @@ export async function runs(root, ctx) {
           el("th", { class: "amt", text: "Records" }), el("th", { class: "amt", text: "Groups" }),
           el("th", { class: "amt", text: "Auto-match" }), el("th", { class: "amt", text: "Exceptions" }),
           el("th", { text: "When" }))),
-        el("tbody", {}, ...list.map((r) =>
-          el("tr", {},
-            el("td", {}, el("div", { text: r.dataset }),
-              el("div", { class: "id cell-sub", text: r.id })),
-            /* Deterministic is the norm, so it stays quiet; an LLM-assisted run
-               is the exception and is the one a reader needs to spot. */
-            el("td", {}, badge(r.resolver_mode === "llm" ? "LLM-assisted" : "Deterministic",
-                               r.resolver_mode === "llm" ? "accent" : "neutral",
-                               { dot: false, quiet: r.resolver_mode !== "llm" })),
-            el("td", { class: "amt", text: num(r.entries) }),
-            el("td", { class: "amt", text: num(r.groups) }),
-            el("td", { class: "amt", text: pct(r.auto_match_rate) }),
-            el("td", { class: "amt", text: num(r.exceptions) }),
-            el("td", { class: "cell-sub", text: ago(r.started_at) })))))),
+        el("tbody", {}, ...rows))),
     el("div", { class: "grid-foot" },
-      el("span", { text: `${num(list.length)} runs` }))));
+      el("span", { text: `${num(list.length)} runs` }),
+      el("span", { class: "spacer" }),
+      el("span", { text: "Select a run to see its numbers" }))));
+}
+
+/* One run, in the terms a controller checks: what tied out, where the money
+   sat, what decided it, and whether the same input has been run before. */
+function showRun(r, sameInput) {
+  const m = r.metrics || {}, mo = r.money || {}, ccy = mo.currency || "INR";
+  const kvBox = (k, v, note) => el("div", { class: "kv-item" },
+    el("div", { class: "kv-k", text: k }),
+    el("div", { class: "kv-v", text: v }),
+    note ? el("div", { class: "cell-sub", style: { fontSize: "11px" }, text: note }) : null);
+
+  const split = [
+    ["Reconciled", mo.reconciled_paise, "var(--ok)"],
+    ["In transit", mo.in_transit_paise, "var(--info)"],
+    ["Recoverable", mo.recoverable_paise, "var(--risk)"],
+    ["Unrecorded", mo.unrecorded_paise, "var(--warn)"],
+    ["Ambiguous", mo.ambiguous_paise, "var(--viz-3)"],
+  ].filter(([, v]) => (v || 0) > 0);
+  const total = split.reduce((a, p) => a + p[1], 0) || 1;
+
+  drawer({
+    title: `${r.dataset} · ${ago(r.started_at)}`,
+    subtitle: `${r.id} · ${date(r.started_at)}`,
+    body: el("div", { class: "stack gap-4" },
+      el("div", { class: "metrics" },
+        metric({ k: "Auto-matched", v: pct(m.auto_match_rate),
+                 tone: m.auto_match_rate >= 0.9 ? "ok" : m.auto_match_rate >= 0.5 ? "warn" : "risk",
+                 note: `${num(m.matched_entries)} of ${num(m.total_entries)} records` }),
+        metric({ k: "Exceptions", v: num(m.exceptions),
+                 tone: m.exceptions ? "warn" : "ok", note: `${num(m.groups)} groups formed` })),
+
+      el("div", {},
+        el("h4", { class: "metric-k", style: { marginBottom: "6px" }, text: "Where the money went" }),
+        split.length
+          ? el("div", {},
+              el("div", { class: "moneybar", role: "img",
+                          "aria-label": split.map(([k, v]) => `${k} ${money(v, ccy)}`).join(", ") },
+                ...split.map(([k, v, c]) =>
+                  el("span", { style: { width: `${(100 * v / total).toFixed(2)}%`, background: c },
+                               title: `${k}: ${money(v, ccy)}` }))),
+              el("div", { class: "moneykey" }, ...split.map(([k, v, c]) =>
+                el("div", { class: "moneykey-item" },
+                  el("span", { class: "moneykey-sw", style: { background: c } }),
+                  el("div", {},
+                    el("span", { class: "moneykey-v", text: money(v, ccy) }), " ",
+                    el("span", { class: "moneykey-k", text: k }))))))
+          : el("p", { class: "cell-sub", text: "Nothing was reconciled in this run." })),
+
+      el("div", {},
+        el("h4", { class: "metric-k", style: { marginBottom: "6px" }, text: "How it was decided" }),
+        el("div", { class: "kv" },
+          kvBox("Structural", pct(m.structural_share), "tied by accounting identity"),
+          kvBox("Deterministic", pct(m.deterministic_share), "tied by an exact reference"),
+          kvBox("Resolver", pct(m.resolver_share),
+                r.resolver_mode === "llm" ? "an LLM resolved the tail" : "heuristic, no model"))),
+
+      el("div", {},
+        el("h4", { class: "metric-k", style: { marginBottom: "6px" }, text: "Provenance" }),
+        el("div", { class: "kv" },
+          kvBox("Replay", m.replay_stable ? "Stable" : "Unstable",
+                m.replay_stable ? "re-running reproduced this" : "a re-run differed"),
+          kvBox("Engine time", ms(m.latency_ms),
+                m.total_entries && m.latency_ms
+                  ? `${num(Math.round(m.total_entries / (m.latency_ms / 1000)))} records/sec` : ""),
+          kvBox("Input digest", r.source_digest,
+                sameInput > 1
+                  ? `same input as ${sameInput - 1} other run${sameInput > 2 ? "s" : ""}`
+                  : "this input was reconciled once"),
+          m.precision != null
+            ? kvBox("Precision", pct(m.precision, 2), "against this dataset's answer key")
+            : null)),
+
+      m.llm_calls
+        ? el("div", {},
+            el("h4", { class: "metric-k", style: { marginBottom: "6px" }, text: "Model usage" }),
+            el("div", { class: "kv" },
+              kvBox("Calls", num(m.llm_calls)),
+              kvBox("Tokens", num((m.llm_input_tokens || 0) + (m.llm_output_tokens || 0))),
+              kvBox("Cost", `$${(m.llm_cost_usd || 0).toFixed(4)}`)))
+        : null),
+  });
 }
 
 /* -------------------------------------------------------------- evidence --- */

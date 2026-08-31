@@ -57,6 +57,7 @@ const P = {
   menu: "M3 6h18M3 12h18M3 18h18",
   chevron: "M9 6l6 6-6 6",
   down: "M6 9l6 6 6-6",
+  up: "M6 15l6-6 6 6",
   file: "M14 3v5h5M14 3H6v18h12V8z",
   link: "M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1",
   empty: "M9 3h6l1 4H8zM4 7h16l-1.5 14h-13z",

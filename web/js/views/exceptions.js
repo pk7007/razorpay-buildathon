@@ -42,7 +42,10 @@ export async function exceptions(root, ctx, params = {}) {
   const metricsSlot = el("div", { class: "section" });
   const filterSlot = el("div", {});
   const gridSlot = el("div", {}, skeletonGrid(8, 6));
-  view.append(metricsSlot, filterSlot, gridSlot);
+  /* Changing a filter changes the table silently for a sighted user, who can
+     see it; a screen reader user needs to be told what the filter did. */
+  const announce = el("div", { class: "sr-only", role: "status", "aria-live": "polite" });
+  view.append(metricsSlot, filterSlot, announce, gridSlot);
 
   let summary;
   try {
@@ -72,7 +75,8 @@ export async function exceptions(root, ctx, params = {}) {
                note: "across open items" }),
       metric({ k: "Carried forward", v: num(s.carried_forward || 0),
                note: "survived more than one run" }),
-      metric({ k: "Resolved", v: num((s.by_status || {}).resolved || 0), tone: "ok",
+      metric({ k: "Resolved", v: num((s.by_status || {}).resolved || 0),
+               tone: (s.by_status || {}).resolved ? "ok" : "",
                note: "closed, with a reason" })));
   }
 
@@ -109,7 +113,7 @@ export async function exceptions(root, ctx, params = {}) {
     const orderBtn = el("button", {
       class: "btn btn-icon", "aria-label": "Toggle sort direction",
       title: state.order === "desc" ? "Descending" : "Ascending",
-    }, icon(state.order === "desc" ? "down" : "upload"));
+    }, icon(state.order === "desc" ? "down" : "up"));
     orderBtn.addEventListener("click", () => {
       state.order = state.order === "desc" ? "asc" : "desc"; sync(); renderFilters(); load();
     });
@@ -150,25 +154,39 @@ export async function exceptions(root, ctx, params = {}) {
     }
 
     if (!data.items.length) {
-      clear(gridSlot).append(emptyState({
-        icon: state.status === "open" ? "check" : "empty",
-        title: state.status === "open" && !state.q && !state.category
-          ? "Nothing open"
-          : "No items match these filters",
-        body: state.status === "open" && !state.q && !state.category
-          ? "Every exception has been dealt with. New ones appear here after the next run."
-          : "Try a wider status, or clear the search.",
-        action: (state.q || state.category || state.status !== "open")
-          ? el("button", { class: "btn", onClick: () => {
-              state.q = ""; state.category = ""; state.status = "open";
-              sync(); renderFilters(); load();
-            } }, "Reset filters")
-          : el("button", { class: "btn btn-primary",
+      /* Three different empty states, because they mean three different things:
+         nothing has ever run, the queue has been worked to zero, or the filters
+         are simply too narrow. Telling a first-time user that "every exception
+         has been dealt with" is a lie about work they have not done. */
+      const filtered = !!(state.q || state.category || state.status !== "open");
+      const neverRun = !summary.total;
+      const empty = neverRun
+        ? { icon: "play", title: "Nothing to work on yet",
+            body: "Run a reconciliation. Anything the engine cannot resolve on its "
+                + "own arrives here, with the reason and a suggested action.",
+            action: el("button", { class: "btn btn-primary",
               onClick: () => (location.hash = "#/reconcile") },
-              icon("play"), "Run a reconciliation"),
-      }));
+              icon("play"), "Run a reconciliation") }
+        : filtered
+          ? { icon: "empty", title: "No items match these filters",
+              body: "Try a wider status, or clear the search.",
+              action: el("button", { class: "btn", onClick: () => {
+                state.q = ""; state.category = ""; state.status = "open";
+                sync(); renderFilters(); load();
+              } }, "Reset filters") }
+          : { icon: "check", title: "Nothing open",
+              body: `All ${num(summary.total)} exceptions have been closed. New ones `
+                  + "appear here after the next run.",
+              action: el("button", { class: "btn",
+                onClick: () => { state.status = ""; sync(); renderFilters(); load(); } },
+                "Show closed items") };
+
+      announce.textContent = empty.title;
+      clear(gridSlot).append(emptyState(empty));
       return;
     }
+
+    announce.textContent = `${data.items.length} of ${data.total} exceptions shown`;
 
     const rows = data.items.map((x) => {
       const tr = el("tr", { dataset: { clickable: "1" }, tabindex: "0" },
