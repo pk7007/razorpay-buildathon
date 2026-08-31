@@ -10,7 +10,7 @@ Python 3.11 · FastAPI · SQLite · MIT · 860 tests
 
 | held-out precision | held-out recall | ₹ in wrong groups | throughput | replay |
 | --- | --- | --- | --- | --- |
-| **1.0000** | **0.9928** | **₹0** | **22,609 rec/s** | stable |
+| **1.0000** | **0.9928** | **₹0** | **~20k rec/s** | stable |
 
 ---
 
@@ -163,7 +163,14 @@ intended behaviour — written up in full in [`docs/METRICS.md`](docs/METRICS.md
 | 23,565 | 1.74 s | 13,524 |
 | 58,908 | 4.14 s | 14,244 |
 
-Single process. Across a 50× range throughput degrades 1.6× — effectively linear.
+Single process, no database in the loop. Across a 50× range throughput degrades
+1.6× — effectively linear.
+
+Accuracy numbers are deterministic and reproduce exactly. Throughput is a
+*measurement*, so it moves with the machine and with whatever else it is doing:
+repeated runs here land between roughly 14k and 23k records/sec on the smallest
+batch. Treat the shape — linear, not quadratic — as the claim, and the absolute
+figure as "this order of magnitude on a laptop".
 
 **Reproduce every number above:**
 
