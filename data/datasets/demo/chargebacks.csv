@@ -1,0 +1,2 @@
+id,payment_id,amount,created_at,status
+cbk_1,pay_cb,4500.00,2026-07-20,lost

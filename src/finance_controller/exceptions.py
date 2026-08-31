@@ -162,6 +162,14 @@ def _categorize(
             f"such payment is in this batch — it is most likely in an earlier period",
         )
 
+    if e.source == "bank" and amt < 0:
+        return (
+            "fee_mismatch", 0.6,
+            f"bank debit {fmt(-amt, e.currency)} on {e.value_date} — money left the "
+            f"account with no settlement or ledger entry explaining it. Typically a "
+            f"bank charge, a reversal, or a transfer booked elsewhere",
+        )
+
     if e.source == "bank" and amt > 0:
         # same UTR as a settlement but amount short -> a deduction happened
         if e.reference:
@@ -208,4 +216,8 @@ def _categorize(
             f"expected to clear within the payout cycle",
         )
 
-    return ("unknown", 0.3, "no structural signal")
+    return (
+        "unknown", 0.3,
+        f"{e.source} entry {fmt(amt, e.currency)} on {e.value_date}: no shared "
+        f"reference, and no counterpart of a comparable amount in any other source",
+    )

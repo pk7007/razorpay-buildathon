@@ -26,11 +26,9 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import SETTINGS
 from .evaluate import benchmark, holdout_report
-from .ingest import available_datasets, parse_bytes
-from .mapping import apply_mapping, detect
+from .ingest import IngestRefused, available_datasets, parse_bytes, prepare
 from .models import ReconResult
 from .pipeline import run_bundled, run_rows
-from .quality import validate
 from .store import Store
 from .synth import PROFILES
 
@@ -176,13 +174,16 @@ async def _observability(request: Request, call_next):
 
 
 _DATASET_BLURB = {
+    "demo": "Nine designed cases in real export formats — zero-MDR UPI, a ₹1.25cr "
+    "payout with TDS, a partial refund, a lost chargeback, a payout that crossed "
+    "the month end, and four things that should not reconcile.",
     "clean": "Well-behaved month — fees, GST, a T+2 payout cycle, one batch, "
     "one payout in transit.",
     "realistic": "A normal month: split batches, merged payouts, a double-booked entry, "
     "an unrecorded credit, a bank charge, and revenue that never settled.",
     "messy": "A rough month — every anomaly, more often. The stress test.",
 }
-_ORDER = ["clean", "realistic", "messy"]
+_ORDER = ["demo", "clean", "realistic", "messy"]
 
 
 # --------------------------------------------------------------------------- routes
@@ -246,8 +247,19 @@ async def reconcile_upload(
     settlements: UploadFile | None = File(None),
     bank: UploadFile | None = File(None),
     ledger: UploadFile | None = File(None),
+    refunds: UploadFile | None = File(None),
+    chargebacks: UploadFile | None = File(None),
 ) -> ReconResult:
-    files = {"payment": payments, "settlement": settlements, "bank": bank, "ledger": ledger}
+    # Six sources, not four. The engine has always modelled refunds and
+    # chargebacks as first-class financial events, but the upload path accepted
+    # only the four "positive" sources -- so a merchant bringing their own
+    # exports could not supply the deductions, and every refunded sale in their
+    # data looked like a settlement that came up short.
+    files = {
+        "payment": payments, "settlement": settlements,
+        "bank": bank, "ledger": ledger,
+        "refund": refunds, "chargeback": chargebacks,
+    }
     if not any(files.values()):
         raise HTTPException(400, "upload at least one file")
     rows: dict = {}
@@ -283,31 +295,16 @@ async def reconcile_upload(
 
 
 def _map_and_validate(source: str, parsed: list[dict], name: str) -> list[dict]:
-    """Detect the file's columns, refuse rather than guess, then keep the good rows."""
-    if not parsed:
-        return []
-    cm = detect(source, list(parsed[0].keys()))
-    if cm.ambiguous:
-        which = "; ".join(f"{f}: {' / '.join(cols)}" for f, cols in cm.ambiguous.items())
-        raise HTTPException(
-            422,
-            f"{name}: two columns are equally plausible for the same field ({which}). "
-            "Rename one so the mapping is unambiguous — guessing here would corrupt "
-            "the reconciliation silently.",
-        )
-    if cm.missing_required:
-        raise HTTPException(
-            422,
-            f"{name}: no column could be mapped to "
-            f"{', '.join(cm.missing_required)}. Add or rename that column.",
-        )
-    mapped = apply_mapping(cm, parsed)
-    good, report = validate(source, mapped)
-    if not good:
-        raise HTTPException(422, f"{name}: no row passed validation ({report.total_rows} read)")
-    if report.invalid_rows:
-        log.info("%s: kept %d of %d rows", name, report.valid_rows, report.total_rows)
-    return good
+    """Detect the file's columns, refuse rather than guess, then keep the good rows.
+
+    The work lives in ``ingest.prepare`` so the upload path and the bundled
+    dataset path cannot drift apart; this wrapper only turns a refusal into the
+    422 an HTTP caller expects.
+    """
+    try:
+        return prepare(source, parsed, name)
+    except IngestRefused as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get("/api/evaluation")

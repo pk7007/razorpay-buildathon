@@ -37,7 +37,9 @@ def test_health(client):
 
 def test_datasets_listed_in_difficulty_order(client):
     names = [d["name"] for d in client.get("/api/datasets").json()]
-    assert names[:3] == ["clean", "realistic", "messy"]
+    # demo first (the designed month a presenter reaches for), then the three
+    # benchmarks in ascending difficulty
+    assert names[:4] == ["demo", "clean", "realistic", "messy"]
 
 
 def test_reconcile_bundled(client):

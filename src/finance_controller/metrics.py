@@ -150,10 +150,14 @@ def money_summary(
         gross_processed_paise=gross,
         reconciled_paise=total("complete"),
         in_transit_paise=total("awaiting_settlement", "awaiting_payout"),
+        # Money owed to the merchant that has not arrived. A bank DEBIT is the
+        # opposite of that -- a ₹118 charge leaving the account is not revenue
+        # to chase, and letting its negative amount in here quietly reduced the
+        # figure a controller uses to decide what to go and collect.
         recoverable_paise=total("payout_overdue", "partial")
         + sum(
             e.amount_paise for e in exceptions
-            if e.category in ("missing_in_bank", "fee_mismatch")
+            if e.category in ("missing_in_bank", "fee_mismatch") and e.amount_paise > 0
         ),
         unrecorded_paise=total("unbooked_payout")
         + sum(e.amount_paise for e in exceptions if e.category == "missing_in_ledger"),

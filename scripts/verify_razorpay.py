@@ -7,14 +7,25 @@ tells you what to do rather than what broke. Nothing here fabricates data: if
 the credentials are missing or the API is unreachable, it says so and stops
 instead of quietly falling back to fixtures.
 
+It walks the whole chain, not just the API call:
+
+    Razorpay test mode -> ingestion -> column mapping -> validation
+                       -> reconciliation -> SQLite -> the endpoints the UI reads
+
+and writes the evidence to ``out/razorpay-verification.json`` so the claim can
+be checked later without re-running anything.
+
 Add --fixtures to run the identical pipeline against local fixtures, which is
-useful for checking the ingestion path before any keys exist.
+useful for checking the ingestion path before any keys exist. The verdict then
+says so in as many words: fixtures are never reported as live data.
 """
 from __future__ import annotations
 
 import argparse
 import io
+import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -33,6 +44,7 @@ from finance_controller.razorpay_source import (  # noqa: E402
     fetch_live,
     fixture_batch,
 )
+from finance_controller.store import Store  # noqa: E402
 
 OK, BAD, SKIP = "PASS", "FAIL", "SKIP"
 _failed = False
@@ -183,6 +195,120 @@ def reconcile(rows: dict, label: str):
     return result
 
 
+def persist(result, provenance: str):
+    """Leg 5: the run has to survive the process, or the workflow is a fiction."""
+    head("7. Database")
+    try:
+        store = Store()
+        run_id = store.record_run(result, f"razorpay-{provenance}")
+    except Exception as exc:  # noqa: BLE001
+        say(BAD, "Could not persist the run", f"{type(exc).__name__}: {exc}",
+            "The reconciliation worked; the workflow half did not. Check "
+            "RECON_DB_PATH and that the directory is writable.")
+        return None
+
+    stored = store.get_run(run_id)
+    if stored is None:
+        say(BAD, "The run was written but cannot be read back", f"run {run_id}")
+        return None
+    if stored["entries"] != result.metrics.total_entries:
+        say(BAD, "The stored run disagrees with the result",
+            f"{stored['entries']} entries stored, {result.metrics.total_entries} reconciled")
+        return None
+    say(OK, "Run recorded and read back", f"run {run_id}, {stored['entries']} entries")
+
+    queue = store.list_exceptions(limit=200)
+    summary = store.queue_summary()
+    say(OK, f"{summary['total']} item(s) in the worklist",
+        f"open={summary['by_status'].get('open', 0)} "
+        f"carried_forward={summary['carried_forward']} "
+        f"value_at_stake={fmt(summary['open_value_minor'])}")
+    for item in queue["items"][:3]:
+        print(f"      {item['entry_id']:<24} {item['category']:<18} "
+              f"{fmt(item['amount_minor']):>14}")
+        print(f"        {item['rationale'][:88]}")
+    return {"run_id": run_id, "queue_total": summary["total"], "store": store}
+
+
+def check_ui_surface(run_id: str):
+    """Leg 6: the endpoints the console actually calls, hit in-process."""
+    head("8. The surface the UI reads")
+    try:
+        from fastapi.testclient import TestClient
+
+        from finance_controller.api import app
+    except Exception as exc:  # noqa: BLE001
+        say(SKIP, "Cannot exercise the API in-process", f"{type(exc).__name__}: {exc}")
+        return {}
+
+    seen = {}
+    with TestClient(app) as c:
+        for path in ("/api/health", "/api/razorpay/status", "/api/runs?limit=5",
+                     "/api/exceptions/summary", "/api/exceptions?limit=5"):
+            r = c.get(path)
+            if r.status_code != 200:
+                say(BAD, f"{path} -> {r.status_code}", r.text[:200])
+                continue
+            seen[path] = r.json()
+        say(OK, "Every endpoint the console calls responded",
+            ", ".join(sorted(seen)))
+
+        runs = seen.get("/api/runs?limit=5") or []
+        if not any(r["id"] == run_id for r in runs):
+            say(BAD, "The new run is not in /api/runs",
+                "the UI would not show it")
+        else:
+            say(OK, "The run is visible to the UI", f"run {run_id}")
+    return seen
+
+
+def write_evidence(batch, result, stored, ui) -> Path:
+    head("9. Evidence")
+    out = Path(__file__).resolve().parents[1] / "out"
+    out.mkdir(exist_ok=True)
+    path = out / "razorpay-verification.json"
+    m, mo = result.metrics, result.money
+    payload = {
+        "checked_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "provenance": batch.provenance,
+        "is_live_razorpay_test_mode": batch.provenance == "live_test",
+        "source_counts": {
+            "payments": len(batch.payments),
+            "refunds": len(batch.refunds),
+            "settlements": len(batch.settlements),
+        },
+        "reconciliation": {
+            "entries": m.total_entries,
+            "groups": m.groups,
+            "exceptions": m.exceptions,
+            "auto_match_rate": m.auto_match_rate,
+            "replay_stable": m.replay_stable,
+            "latency_ms": m.latency_ms,
+        },
+        "money_paise": {
+            "gross_processed": mo.gross_processed_paise,
+            "reconciled": mo.reconciled_paise,
+            "recoverable": mo.recoverable_paise,
+            "in_exception": mo.in_exception_paise,
+        },
+        "audit_records": len(result.audit),
+        "persisted": bool(stored),
+        "run_id": (stored or {}).get("run_id"),
+        "worklist_items": (stored or {}).get("queue_total"),
+        "ui_endpoints_ok": sorted(ui or {}),
+        "note": (
+            "Data pulled from a Razorpay TEST-MODE account."
+            if batch.provenance == "live_test"
+            else "LOCAL FIXTURES in Razorpay's documented response shape. "
+                 "This is NOT Razorpay data."
+        ),
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    say(OK, "Written", str(path.relative_to(Path.cwd())) if path.is_relative_to(Path.cwd())
+        else str(path))
+    return path
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Verify the Razorpay ingestion path")
     ap.add_argument("--fixtures", action="store_true",
@@ -209,7 +335,10 @@ def main() -> int:
             return 1
 
     clean = check_quality(batch.as_rows())
-    reconcile(clean, f"razorpay-{batch.provenance}")
+    result = reconcile(clean, f"razorpay-{batch.provenance}")
+    stored = persist(result, batch.provenance)
+    ui = check_ui_surface(stored["run_id"]) if stored else {}
+    write_evidence(batch, result, stored, ui)
 
     head("Verdict")
     if _failed:

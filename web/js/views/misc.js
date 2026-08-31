@@ -272,11 +272,17 @@ function evRow(name, s, tone) {
 
 /* ---------------------------------------------------------------- import --- */
 
+/* Six sources, because a month has six. Refunds and chargebacks are financial
+   events with their own lifecycle, not noise to be filtered out — a refunded
+   sale settles for less, and without the refund file that shortfall looks like
+   a payout that came up mysteriously short. */
 const SOURCES = [
   ["payments", "payment", "Payments", "Gateway captures"],
   ["settlements", "settlement", "Settlements", "Payouts to your bank"],
   ["bank", "bank", "Bank statement", "What actually landed"],
   ["ledger", "ledger", "Ledger", "What the books say"],
+  ["refunds", "refund", "Refunds", "Money returned, full or partial"],
+  ["chargebacks", "chargeback", "Chargebacks", "Disputes clawed back"],
 ];
 
 export async function importView(root, ctx) {

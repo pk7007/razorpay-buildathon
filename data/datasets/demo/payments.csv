@@ -1,0 +1,11 @@
+Payment Id,Order Id,Created At,Amount,Method,Currency
+pay_norm,ORD-1001,2026-07-01,10000.00,card,INR
+pay_upi,ORD-1002,01-07-2026,5000.00,upi,INR
+pay_flat,ORD-1003,02/07/2026,2500.50,netbanking,INR
+pay_big,ORD-1004,2026-07-03,12500000.00,card,INR
+pay_refund,ORD-1005,03 Jul 2026,8000.00,card,INR
+pay_full_refund,ORD-1006,2026-07-04,3000.00,card,INR
+pay_cb,ORD-1007,2026-07-05,4500.00,card,INR
+pay_zero,ORD-1008,2026-07-05,0.00,upi,INR
+pay_late,ORD-1009,2026-07-28,6000.00,card,INR
+pay_never,ORD-1010,2026-07-06,7777.77,card,INR
