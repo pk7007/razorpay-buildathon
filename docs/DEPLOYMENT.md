@@ -17,9 +17,11 @@ The image is `python:3.11-slim`, runs `uvicorn` on `:8000`, and has a
 `HEALTHCHECK` hitting `/api/health`. It regenerates the benchmark datasets at
 build time, so a broken generator fails the build rather than shipping.
 
-> **Not yet verified.** Docker was not installed on the machine this was built
-> on, so the Dockerfile is written to spec but has never been built. CI builds
-> and runs it on every push — check the `docker` job before relying on it.
+> **Verified in CI, not by hand.** Docker is not installed on the machine this
+> was written on. The `docker build · run · reconcile` job builds the image,
+> starts the container and reconciles a dataset through it on every push to
+> `main`; it is green. If you change the Dockerfile, watch that job rather than
+> trusting a local build you may not be able to run.
 
 ## Render
 

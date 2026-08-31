@@ -37,7 +37,7 @@ python scripts/run_reconciliation.py --benchmark     # throughput
 ## Tests
 
 ```bash
-python -m pytest -q              # 258 tests
+python -m pytest -q              # 264 tests
 python -m pytest -q -m slow      # + the throughput benchmark
 python -m ruff check .           # lint
 python -m ruff check --fix .
@@ -126,9 +126,25 @@ Two traps this codebase has already hit, worth knowing before you add code:
 ## Working on the frontend
 
 `web/` is deliberately buildless — no bundler, no framework, no `node_modules`.
-Edit `web/app.js` / `web/app.css` and reload. The server sends
-`Cache-Control: no-cache` on assets so a stale `app.js` cannot silently survive
-a change.
+It is native ES modules and hand-written CSS: edit a file under `web/js/` or
+`web/styles/` and reload. The server sends `Cache-Control: no-cache` on assets,
+so a stale module cannot silently survive a change.
+
+Where things live:
+
+| Want to change | Edit |
+| --- | --- |
+| a colour, a type size, a radius, a duration | `web/styles/tokens.css` |
+| the app shell, the rail, responsive behaviour | `web/styles/base.css` |
+| a badge, a table, the drawer, a dropzone | `web/styles/components.css` |
+| what a screen shows | `web/js/views/<screen>.js` |
+| a shared primitive (badge, empty state, drawer) | `web/js/ui.js` |
+| an endpoint or an error message | `web/js/api.js` |
+
+Fonts are self-hosted under `web/fonts/` (IBM Plex, latin subset, 222 KB). That
+is deliberate: the app ships a `default-src 'self'` CSP with no external origin
+allowed at all, and a reconciliation console may well run inside a locked-down
+finance network where a font CDN is unreachable.
 
 Keep it that way unless there is a real reason not to: a build step is a
 dependency, a lockfile, and a way for the demo to break on someone else's

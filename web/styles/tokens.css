@@ -1,0 +1,217 @@
+/* ==========================================================================
+   Design tokens — AI Finance Controller
+   --------------------------------------------------------------------------
+   One rule governs this palette: in reconciliation, green / amber / red are
+   SEMANTIC. Green means matched, amber means needs attention, red means money
+   is at risk. So the brand accent cannot be any of them, or a judge cannot
+   tell "our brand colour" from "this reconciled". The accent is indigo, and it
+   is used only for interactive affordance — never for financial state.
+
+   Neutrals carry a slight blue bias toward the accent so greys read as chosen
+   rather than inherited.
+   ========================================================================== */
+
+:root {
+  /* ---- surface hierarchy (light) ---- */
+  --bg:            #f5f7fa;   /* app ground */
+  --surface:       #ffffff;   /* cards, rows */
+  --surface-2:     #eef1f6;   /* sunken: inputs, code, table head */
+  --surface-3:     #e4e9f0;   /* pressed / selected */
+  --overlay:       rgba(15, 23, 42, .48);
+
+  /* ---- ink ---- */
+  --ink:           #0f172a;
+  --ink-2:         #475569;   /* secondary text */
+  /* --ink-3 is the workhorse for meta text, and meta text sits on --surface-2
+     as often as on white. #64748b clears AA on white but only reaches 4.2:1 on
+     the sunken surface, so it is set to pass on the *darker* of the two. */
+  --ink-3:         #56637a;   /* meta, labels */
+  --ink-4:         #7c8ba3;   /* disabled, placeholder */
+  --on-accent:     #ffffff;
+
+  /* ---- lines ---- */
+  --line:          #dfe4ec;
+  --line-2:        #c8d0dc;   /* stronger: table rules, dividers */
+
+  /* ---- brand accent: interaction only, never financial state ---- */
+  --accent:        #4338ca;
+  --accent-hover:  #3730a3;
+  --accent-soft:   #eef0fe;
+  --accent-line:   #c7cbf7;
+  --accent-ink:    #3730a3;
+
+  /* ---- semantic: financial state ---- */
+  --ok:            #14683a;   /* matched, reconciled */
+  --ok-soft:       #e8f5ec;
+  --ok-line:       #b4dcc2;
+
+  --warn:          #b45309;   /* needs attention, in transit */
+  --warn-soft:     #fdf2e3;
+  --warn-line:     #f0d5a8;
+
+  --risk:          #b91c1c;   /* recoverable, overdue, discrepancy */
+  --risk-soft:     #fdeceb;
+  --risk-line:     #f3c2bf;
+
+  --info:          #0369a1;   /* informational, ambiguous */
+  --info-soft:     #e6f2fa;
+  --info-line:     #b3d8ee;
+
+  --neutral-soft:  #eef1f6;
+  --neutral-line:  #d5dce6;
+
+  /* Text placed ON a filled semantic swatch. Light theme fills are dark, so
+     white works; the dark theme's fills are pale, where white drops to 2.8:1. */
+  --on-risk:       #ffffff;
+  --on-ok:         #ffffff;
+
+  /* ---- data-viz ramp: distinguishable, and never reusing semantic hues ---- */
+  --viz-1: #4338ca;
+  --viz-2: #0891b2;
+  --viz-3: #7c3aed;
+  --viz-4: #0f766e;
+  --viz-5: #a16207;
+
+  /* ---- elevation: flat by default; depth only where it means "above" ---- */
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, .06);
+  --shadow-2: 0 1px 3px rgba(15, 23, 42, .08), 0 6px 16px rgba(15, 23, 42, .06);
+  --shadow-3: 0 2px 8px rgba(15, 23, 42, .10), 0 24px 48px rgba(15, 23, 42, .12);
+
+  /* ---- type ---- */
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  --t-11: 11px;  --t-12: 12px;  --t-13: 13px;  --t-14: 14px;
+  --t-16: 16px;  --t-18: 18px;  --t-22: 22px;  --t-28: 28px;  --t-36: 36px;
+
+  --lh-tight: 1.2;
+  --lh-snug:  1.4;
+  --lh-body:  1.55;
+
+  /* ---- spacing: 4px rhythm, dense console ---- */
+  --s-1: 4px;   --s-2: 8px;   --s-3: 12px;  --s-4: 16px;
+  --s-5: 20px;  --s-6: 24px;  --s-8: 32px;  --s-10: 40px;  --s-12: 48px;
+
+  /* ---- radii: restrained. Big radii read as consumer, not finance. ---- */
+  --r-sm: 4px;  --r-md: 6px;  --r-lg: 8px;  --r-xl: 12px;  --r-pill: 999px;
+
+  /* ---- motion: fast, and only to explain state ---- */
+  --dur-1: 90ms;
+  --dur-2: 160ms;
+  --dur-3: 240ms;
+  --ease: cubic-bezier(.4, 0, .2, 1);
+  --ease-out: cubic-bezier(0, 0, .2, 1);
+
+  /* ---- layout ---- */
+  --rail: 232px;
+  --topbar: 56px;
+  --z-drawer: 60;
+  --z-scrim: 55;
+  --z-topbar: 40;
+  --z-toast: 80;
+}
+
+/* Dark is a designed set, not an inversion: surfaces lift toward the viewer,
+   semantic hues are desaturated so they stay legible without glowing, and the
+   accent is lightened to hold 4.5:1 on the dark ground. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:        #0b0f16;
+    --surface:   #131924;
+    --surface-2: #1a2130;
+    --surface-3: #232b3b;
+    --overlay:   rgba(2, 6, 12, .62);
+
+    --ink:   #e8edf5;
+    --ink-2: #a8b4c6;
+    --ink-3: #8593a8;
+    --ink-4: #8493a8;   /* 4.7:1 on --surface; the old #64748b failed AA */
+
+    --line:   #232b3a;
+    --line-2: #323c4f;
+
+    --accent:       #818cf8;
+    --accent-hover: #a5b0fb;
+    --accent-soft:  #1b2040;
+    --accent-line:  #3b3f7a;
+    --accent-ink:   #a5b0fb;
+    --on-accent:    #0b0f16;
+
+    --ok:        #4ade80;
+    --ok-soft:   #10241a;
+    --ok-line:   #1f4d33;
+
+    --warn:      #fbbf24;
+    --warn-soft: #241c0c;
+    --warn-line: #4d3c14;
+
+    --risk:      #f87171;
+    --risk-soft: #2a1414;
+    --risk-line: #5c2626;
+
+    --info:      #38bdf8;
+    --info-soft: #0c1f2c;
+    --info-line: #1c4055;
+
+    --neutral-soft: #1a2130;
+    --neutral-line: #313a4c;
+
+    --on-risk: #2a0a0a;
+    --on-ok:   #052e16;
+
+    --viz-1: #818cf8;
+    --viz-2: #22d3ee;
+    --viz-3: #c084fc;
+    --viz-4: #2dd4bf;
+    --viz-5: #fbbf24;
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-2: 0 1px 3px rgba(0, 0, 0, .5), 0 6px 16px rgba(0, 0, 0, .4);
+    --shadow-3: 0 2px 8px rgba(0, 0, 0, .5), 0 24px 48px rgba(0, 0, 0, .55);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg:        #0b0f16;
+  --surface:   #131924;
+  --surface-2: #1a2130;
+  --surface-3: #232b3b;
+  --overlay:   rgba(2, 6, 12, .62);
+  --ink:   #e8edf5;
+  --ink-2: #a8b4c6;
+  --ink-3: #8593a8;
+  --ink-4: #8493a8;   /* 4.7:1 on --surface; the old #64748b failed AA */
+  --line:   #232b3a;
+  --line-2: #323c4f;
+  --accent:       #818cf8;
+  --accent-hover: #a5b0fb;
+  --accent-soft:  #1b2040;
+  --accent-line:  #3b3f7a;
+  --accent-ink:   #a5b0fb;
+  --on-accent:    #0b0f16;
+  --ok:        #4ade80;
+  --ok-soft:   #10241a;
+  --ok-line:   #1f4d33;
+  --warn:      #fbbf24;
+  --warn-soft: #241c0c;
+  --warn-line: #4d3c14;
+  --risk:      #f87171;
+  --risk-soft: #2a1414;
+  --risk-line: #5c2626;
+  --info:      #38bdf8;
+  --info-soft: #0c1f2c;
+  --info-line: #1c4055;
+  --neutral-soft: #1a2130;
+  --neutral-line: #313a4c;
+
+  --on-risk: #2a0a0a;
+  --on-ok:   #052e16;
+  --viz-1: #818cf8;
+  --viz-2: #22d3ee;
+  --viz-3: #c084fc;
+  --viz-4: #2dd4bf;
+  --viz-5: #fbbf24;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, .5), 0 6px 16px rgba(0, 0, 0, .4);
+  --shadow-3: 0 2px 8px rgba(0, 0, 0, .5), 0 24px 48px rgba(0, 0, 0, .55);
+}

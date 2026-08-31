@@ -4,7 +4,9 @@
 
 Built for the **[Razorpay AI Buildathon](https://razorpay.com/buildathon/) — Track 4: AI Finance Controller**.
 
-Python 3.11 · FastAPI · SQLite · MIT · 258 tests
+[![ci](https://github.com/pk7007/razorpay-buildathon/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pk7007/razorpay-buildathon/actions/workflows/ci.yml)
+
+Python 3.11 · FastAPI · SQLite · MIT · 264 tests
 
 | held-out precision | held-out recall | ₹ in wrong groups | throughput | replay |
 | --- | --- | --- | --- | --- |
@@ -279,10 +281,13 @@ razorpay-buildathon/
 │   ├── models.py               the canonical schema
 │   ├── audit.py                the decision log
 │   └── config.py               env + tolerances
-├── web/                        buildless dashboard + worklist (html/css/js)
+├── web/                        the console — 6 screens, no build step
+│   ├── styles/                 design tokens, shell, components
+│   ├── js/views/               dashboard, reconcile, worklist, runs, import, accuracy
+│   └── fonts/                  IBM Plex, self-hosted (the CSP allows no external origin)
 ├── data/datasets/              3 benchmark datasets + answer keys
 ├── scripts/                    CLI entry point, dataset generator
-├── tests/                      258 tests
+├── tests/                      264 tests
 ├── docs/                       architecture, metrics, api, dev, deploy, demo, pitch
 ├── .github/workflows/ci.yml    lint · tests · reproducibility · docker
 ├── Dockerfile · render.yaml · Procfile
@@ -364,7 +369,7 @@ The CLI writes `reconciliation.json`, `exceptions.csv`, `audit.jsonl` and
 ## Testing
 
 ```bash
-python -m pytest -q              # 258 tests
+python -m pytest -q              # 264 tests
 python -m pytest -q -m slow      # + throughput benchmark
 python -m ruff check .           # lint
 ```
@@ -465,8 +470,10 @@ Stated plainly rather than buried:
   for the SDK in `tests/test_razorpay_live.py`, and
   `python scripts/verify_razorpay.py` proves it for real in one command once keys
   exist. Until then the app reports its own data as `fixture`, never `live_test`.
-- The **Dockerfile has never been built locally** (Docker not installed) — CI
-  builds and runs it on every push.
+- The **Dockerfile is not built locally** (Docker is not installed on the build
+  machine). CI builds the image, starts the container and reconciles a dataset
+  through it on every push to `main` — the `docker build · run · reconcile` job
+  is green, so the image is verified, just not by hand here.
 - **FX-adjusted international settlements are not modelled.** They need the
   settlement recon report as a join key.
 - The benchmark is **synthetic**, which is what the track asks for, but it is not

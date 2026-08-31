@@ -1,0 +1,215 @@
+/* ==========================================================================
+   Base: reset, typography, app shell
+   ========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--t-14);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  /* Tabular figures everywhere by default. In a finance product a column of
+     amounts that jitters as digits change is a correctness smell, not a
+     cosmetic one. */
+  font-variant-numeric: tabular-nums;
+}
+
+h1, h2, h3, h4 { margin: 0; font-weight: 600; line-height: var(--lh-tight); letter-spacing: -.011em; }
+h1 { font-size: var(--t-22); }
+h2 { font-size: var(--t-18); }
+h3 { font-size: var(--t-16); }
+h4 { font-size: var(--t-13); }
+p  { margin: 0; }
+
+a { color: var(--accent); text-underline-offset: 2px; }
+a:hover { color: var(--accent-hover); }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+::selection { background: var(--accent-soft); color: var(--accent-ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---- utility ---- */
+.hidden { display: none !important; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.mono { font-family: var(--font-mono); font-size: .92em; }
+.num  { font-variant-numeric: tabular-nums; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stack { display: flex; flex-direction: column; }
+.row   { display: flex; align-items: center; }
+.grow  { flex: 1; min-width: 0; }
+.gap-1 { gap: var(--s-1); } .gap-2 { gap: var(--s-2); }
+.gap-3 { gap: var(--s-3); } .gap-4 { gap: var(--s-4); }
+.gap-6 { gap: var(--s-6); }
+
+/* Skip link — first tab stop, and it must not be obscured (WCAG 2.2). */
+.skip {
+  position: absolute; left: var(--s-3); top: -60px; z-index: 200;
+  background: var(--accent); color: var(--on-accent);
+  padding: var(--s-2) var(--s-4); border-radius: var(--r-md);
+  font-size: var(--t-13); font-weight: 600; text-decoration: none;
+  transition: top var(--dur-2) var(--ease);
+}
+.skip:focus { top: var(--s-3); color: var(--on-accent); }
+
+/* ==========================================================================
+   App shell: rail + topbar + content
+   ========================================================================== */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+/* ---- left rail ---- */
+.rail {
+  grid-row: 1 / -1;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  overflow-y: auto;
+}
+
+.brand {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-4) var(--s-4) var(--s-5);
+}
+.brand-mark {
+  width: 30px; height: 30px; border-radius: var(--r-md);
+  background: var(--accent); color: var(--on-accent);
+  display: grid; place-items: center; flex-shrink: 0;
+}
+.brand-mark svg { width: 17px; height: 17px; }
+.brand-name { font-size: var(--t-13); font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
+.brand-sub  { font-size: var(--t-11); color: var(--ink-3); line-height: 1.3; }
+
+.nav { padding: 0 var(--s-2); display: flex; flex-direction: column; gap: 1px; }
+.nav-label {
+  font-size: var(--t-11); font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink-3);
+  padding: var(--s-4) var(--s-3) var(--s-2);
+}
+.nav-item {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-md);
+  color: var(--ink-2);
+  font-size: var(--t-13); font-weight: 500;
+  text-decoration: none; cursor: pointer;
+  border: 0; background: none; width: 100%; text-align: left;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+.nav-item:hover { background: var(--surface-2); color: var(--ink); }
+.nav-item[aria-current="page"] {
+  background: var(--accent-soft); color: var(--accent-ink); font-weight: 600;
+}
+.nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+.nav-count {
+  margin-left: auto; font-size: var(--t-11); font-weight: 600;
+  font-family: var(--font-mono);
+  background: var(--surface-3); color: var(--ink-2);
+  padding: 1px 6px; border-radius: var(--r-pill); min-width: 20px; text-align: center;
+}
+.nav-item[aria-current="page"] .nav-count { background: var(--accent); color: var(--on-accent); }
+.nav-count.alert { background: var(--risk); color: var(--on-risk); }
+.nav-count:empty { display: none; }
+
+.rail-foot { margin-top: auto; padding: var(--s-3); border-top: 1px solid var(--line); }
+
+/* ---- topbar ---- */
+.topbar {
+  height: var(--topbar);
+  border-bottom: 1px solid var(--line);
+  /* Opaque, not frosted. A translucent bar makes the contrast of everything on
+     it depend on whatever happens to be scrolling underneath. */
+  background: var(--surface);
+  display: flex; align-items: center; gap: var(--s-4);
+  padding: 0 var(--s-6);
+  position: sticky; top: 0; z-index: var(--z-topbar);
+}
+.topbar h1 { font-size: var(--t-16); }
+.topbar-sub { font-size: var(--t-12); color: var(--ink-3); }
+.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: var(--s-2); }
+
+/* Specific enough to beat .btn-icon{display:inline-flex} in components.css. */
+.topbar .rail-toggle { display: none; }
+
+/* ---- content ---- */
+.main { min-width: 0; display: flex; flex-direction: column; }
+.view { padding: var(--s-6); max-width: 1440px; width: 100%; }
+/* The topbar carries the page's h1; the view opens with a lede, not a repeat
+   of the title one line below it. */
+.view-head { margin-bottom: var(--s-5); }
+.view-head p { color: var(--ink-3); font-size: var(--t-13); max-width: 74ch; }
+
+.section { margin-bottom: var(--s-8); }
+.section-head {
+  display: flex; align-items: baseline; gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+.section-head h3 { font-size: var(--t-13); font-weight: 600; letter-spacing: -.005em; }
+.section-head .hint { font-size: var(--t-12); color: var(--ink-3); }
+.section-head .spacer { flex: 1; }
+
+/* ==========================================================================
+   Responsive: the rail collapses to a drawer, not a squeeze
+   ========================================================================== */
+
+@media (max-width: 1024px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .rail {
+    position: fixed; left: 0; top: 0; bottom: 0; width: 268px;
+    z-index: var(--z-drawer);
+    transform: translateX(-100%);
+    transition: transform var(--dur-3) var(--ease);
+    box-shadow: var(--shadow-3);
+  }
+  .rail[data-open="true"] { transform: none; }
+  .topbar .rail-toggle { display: inline-flex; }
+  .view { padding: var(--s-4); }
+  .topbar { padding: 0 var(--s-4); }
+}
+
+@media (max-width: 560px) {
+  .topbar-sub { display: none; }
+  .view { padding: var(--s-3); }
+}
+
+/* Scrim behind the collapsed rail. Off-canvas nav without one lets a tap
+   land on content the user cannot see. */
+.rail-scrim { display: none; }
+@media (max-width: 1024px) {
+  .rail[data-open="true"] ~ * .rail-scrim,
+  .rail[data-open="true"] + .main .rail-scrim {
+    display: block; position: fixed; inset: 0;
+    background: var(--overlay); z-index: calc(var(--z-drawer) - 1);
+  }
+}

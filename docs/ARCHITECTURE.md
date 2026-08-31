@@ -109,10 +109,45 @@ fingerprints match. LLM calls are pinned to `temperature=0`.
 
 ## Frontend (`web/`)
 
-Buildless single page (vanilla JS + CSS, theme‑aware, responsive). Calls
-`/api/datasets` and `/api/reconcile[/upload]`, renders the KPI row, the money
-bar, and four tabs: matched groups (filter by status, expand to entries),
-exceptions (category + reason + action), audit trail, metrics vs targets.
+Buildless: native ES modules, hand-written CSS, no bundler and no
+`node_modules`. Six screens behind a hash router.
+
+```
+web/
+├── index.html              app shell; loads three stylesheets and one module
+├── favicon.svg
+├── fonts/                  IBM Plex latin subset, self-hosted (7 files, 222 KB)
+├── styles/
+│   ├── fonts.css           @font-face declarations
+│   ├── tokens.css          colour, type, spacing, elevation, motion — all three
+│   │                       theme states (system / explicit light / explicit dark)
+│   ├── base.css            reset, typography, app shell, responsive rail
+│   └── components.css      badges, metrics, grids, drawer, dropzones, toasts
+└── js/
+    ├── theme.js            pre-paint theme application (separate file: CSP is
+    │                       `script-src 'self'`, so no inline script)
+    ├── app.js              rail, topbar, routing, the rail's unresolved count
+    ├── router.js           hash routing with a stale-render guard
+    ├── api.js              the only module that calls the server
+    ├── format.js           money, dates, percentages — Indian digit grouping
+    ├── ui.js               DOM builder, icons, badges, states, drawer, toasts
+    └── views/
+        ├── dashboard.js        close overview
+        ├── reconcile.js        pick a batch, read the result (also renders the
+        │                       result for an upload)
+        ├── exceptions.js       the worklist
+        ├── exception-detail.js the investigation drawer
+        └── misc.js             run history, accuracy evidence, file import
+```
+
+Two rules the frontend keeps:
+
+- **Nothing renders through `innerHTML` except icon SVG.** Bank narrations are
+  attacker-controllable text; every node is built with `textContent`, so a
+  narration can never become markup.
+- **Colour is never the only channel.** Every badge carries a dot as well as a
+  hue, and the brand accent is indigo precisely because green / amber / red are
+  already reserved for financial state.
 
 ## Deploy
 

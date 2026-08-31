@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import mimetypes
 import time
 import uuid
 from collections import deque
@@ -26,12 +27,18 @@ from fastapi.staticfiles import StaticFiles
 from .config import SETTINGS
 from .evaluate import benchmark, holdout_report
 from .ingest import available_datasets, parse_bytes
+from .mapping import apply_mapping, detect
 from .models import ReconResult
 from .pipeline import run_bundled, run_rows
+from .quality import validate
 from .store import Store
 from .synth import PROFILES
 
 _WEB = Path(__file__).resolve().parents[2] / "web"
+
+# Python's mimetypes table predates woff2 on some platforms; without this the
+# self-hosted fonts are served as application/octet-stream and silently ignored.
+mimetypes.add_type("font/woff2", ".woff2")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -253,19 +260,54 @@ async def reconcile_upload(
         if len(blob) > _MAX_FILE_BYTES:
             raise HTTPException(413, f"{_safe_name(up.filename)} exceeds 8 MB")
         try:
-            rows[source] = parse_bytes(up.filename or f"{source}.csv", blob)
+            parsed = parse_bytes(up.filename or f"{source}.csv", blob)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
                 422, f"could not parse {_safe_name(up.filename)}: {type(exc).__name__}"
             ) from exc
-        if not isinstance(rows[source], list):
+        if not isinstance(parsed, list):
             raise HTTPException(422, f"{_safe_name(up.filename)} is not a list of rows")
+
+        # Uploaded files carry whatever column names the bank chose, so they go
+        # through the same detect -> map -> validate path that /api/ingest/preview
+        # shows the caller. Skipping it here would make the preview a promise the
+        # run does not keep: every amount would normalize to zero and the engine
+        # would then "match" rows worth nothing at all.
+        rows[source] = _map_and_validate(source, parsed, _safe_name(up.filename))
         total += len(rows[source])
     if total == 0:
-        raise HTTPException(422, "no rows found in the uploaded files")
+        raise HTTPException(422, "no usable rows found in the uploaded files")
     if total > _MAX_ROWS:
         raise HTTPException(413, f"{total} rows exceeds the {_MAX_ROWS}-row limit")
     return _reconcile_and_record(rows, "upload")
+
+
+def _map_and_validate(source: str, parsed: list[dict], name: str) -> list[dict]:
+    """Detect the file's columns, refuse rather than guess, then keep the good rows."""
+    if not parsed:
+        return []
+    cm = detect(source, list(parsed[0].keys()))
+    if cm.ambiguous:
+        which = "; ".join(f"{f}: {' / '.join(cols)}" for f, cols in cm.ambiguous.items())
+        raise HTTPException(
+            422,
+            f"{name}: two columns are equally plausible for the same field ({which}). "
+            "Rename one so the mapping is unambiguous — guessing here would corrupt "
+            "the reconciliation silently.",
+        )
+    if cm.missing_required:
+        raise HTTPException(
+            422,
+            f"{name}: no column could be mapped to "
+            f"{', '.join(cm.missing_required)}. Add or rename that column.",
+        )
+    mapped = apply_mapping(cm, parsed)
+    good, report = validate(source, mapped)
+    if not good:
+        raise HTTPException(422, f"{name}: no row passed validation ({report.total_rows} read)")
+    if report.invalid_rows:
+        log.info("%s: kept %d of %d rows", name, report.valid_rows, report.total_rows)
+    return good
 
 
 @app.get("/api/evaluation")

@@ -5,8 +5,13 @@ use the header layouts real Indian bank statements actually arrive with.
 """
 from __future__ import annotations
 
-import pytest
+import io
 
+import pytest
+from fastapi.testclient import TestClient
+
+from finance_controller import api
+from finance_controller.api import app
 from finance_controller.mapping import apply_mapping, detect
 from finance_controller.pipeline import run_rows
 from finance_controller.quality import combined_summary, validate
@@ -197,3 +202,86 @@ def test_uncaptured_payments_are_excluded():
     reported as a missing payout."""
     b = fixture_batch()
     assert all(p["status"] == "captured" for p in b.payments)
+
+
+# --------------------------------------------------------------------------- #
+# The upload endpoint must apply the mapping it previews
+# --------------------------------------------------------------------------- #
+#
+# /api/ingest/preview used to detect columns, map them and report row quality,
+# while /api/reconcile/upload fed the raw parsed rows straight to the engine.
+# The preview therefore promised a mapping the run never applied: every amount
+# normalized to zero, every date to 1970-01-01, and the engine then "matched"
+# rows worth nothing at all with a heuristic confidence of 75%. Silent zeroes
+# are the worst possible failure for a reconciliation tool, so this is pinned.
+
+HDFC_CSV = (
+    b"Txn Date,Value Dt,Narration,Chq/Ref No,Withdrawal Amt.,Deposit Amt.,Closing Balance\n"
+    b"2026-07-01,2026-07-01,NEFT-ACME-UTR8811,UTR8811,,49523.10,249523.10\n"
+    b"2026-07-03,2026-07-03,NEFT-ACME-UTR8812,UTR8812,,18240.55,267763.65\n"
+    b"2026-07-06,2026-07-06,BANK CHARGES GST,,118.00,,267645.65\n"
+)
+
+TALLY_CSV = (
+    b"Sl No,Booking Date,Particulars,Amount INR,Currency,Order Id\n"
+    b"L-1,2026-07-01,Sales - online orders,50000.00,INR,ORD9001\n"
+    b"L-2,2026-07-03,Sales - online orders,18500.00,INR,ORD9002\n"
+)
+
+
+@pytest.fixture(scope="module")
+def client():
+    with TestClient(app) as c:                      # runs the lifespan warmup
+        yield c
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """The limiter is process-global; a shared bucket would make test order matter."""
+    api._hits.clear()
+    yield
+    api._hits.clear()
+
+
+def _upload(client, **files):
+    return client.post(
+        "/api/reconcile/upload",
+        files={k: (f"{k}.csv", io.BytesIO(v), "text/csv") for k, v in files.items()},
+    )
+
+
+def test_upload_applies_the_mapping_the_preview_shows(client):
+    r = _upload(client, bank=HDFC_CSV, ledger=TALLY_CSV)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    by_id = {e["id"]: e for e in body["entries"]}
+    amounts = sorted(e["amount_paise"] for e in by_id.values() if e["source"] == "bank")
+    assert amounts == [-11800, 1824055, 4952310], amounts
+    assert all(e["value_date"] != "1970-01-01" for e in by_id.values())
+    assert body["money"]["in_exception_paise"] > 0
+
+
+def test_upload_never_matches_on_zeroed_amounts(client):
+    """A group whose members are all worth nothing is not a match."""
+    body = _upload(client, bank=HDFC_CSV, ledger=TALLY_CSV).json()
+    for g in body["groups"]:
+        assert g["amount_paise"] != 0, g
+
+
+def test_upload_refuses_an_ambiguous_amount_column(client):
+    ambiguous = (
+        b"Date,Amount,Transaction Amount,Narration\n"
+        b"2026-07-01,100.00,100.00,duplicate amount columns\n"
+    )
+    r = _upload(client, bank=ambiguous)
+    assert r.status_code == 422
+    assert "unambiguous" in r.json()["detail"].lower()
+
+
+def test_upload_keeps_good_rows_and_drops_torn_ones(client):
+    torn = HDFC_CSV + b"not-a-date,,TORN ROW,,,ABC,276555.65\n"
+    r = _upload(client, bank=torn, ledger=TALLY_CSV)
+    assert r.status_code == 200, r.text
+    # the torn row is dropped; the three good bank rows and two ledger rows survive
+    assert r.json()["metrics"]["total_entries"] == 5
