@@ -72,7 +72,10 @@ export async function dashboard(root, ctx) {
   clear(metricsSlot).append(
     el("div", { class: "metrics" },
       metric({
-        k: "Auto-matched", v: pct(m.auto_match_rate), tone: "ok",
+        /* The tone has to follow the number. A green spine on "0.0%" is the
+           dashboard telling you a lie in the one place it should not. */
+        k: "Auto-matched", v: pct(m.auto_match_rate),
+        tone: m.auto_match_rate >= 0.9 ? "ok" : m.auto_match_rate >= 0.5 ? "warn" : "risk",
         note: `${num(m.matched_entries)} of ${num(m.total_entries)} records`,
       }),
       metric({

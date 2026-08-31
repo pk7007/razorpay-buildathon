@@ -182,7 +182,8 @@ export function renderResult(host, result, title, roundtrip) {
                tone: mo.recoverable_paise > 0 ? "risk" : "",
                title: money(mo.recoverable_paise, ccy), note: "chase this" }),
       m.precision != null
-        ? metric({ k: "Precision", v: pct(m.precision, 2), tone: "ok",
+        ? metric({ k: "Precision", v: pct(m.precision, 2),
+                   tone: m.precision >= 0.999 ? "ok" : m.precision >= 0.98 ? "warn" : "risk",
                    note: "against a ground-truth key" })
         : metric({ k: "Replay", v: m.replay_stable ? "Stable" : "Unstable",
                    tone: m.replay_stable ? "ok" : "risk", note: "re-run reproduces this" }),

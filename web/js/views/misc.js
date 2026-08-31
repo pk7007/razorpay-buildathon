@@ -184,9 +184,13 @@ export async function evidence(root, ctx) {
   clear(slot).append(
     el("div", { class: "section" },
       el("div", { class: "metrics" },
-        metric({ k: "Held-out precision", v: pct(h.precision_mean, 2), tone: "ok",
+        /* Tones track the value, not the claim: if precision ever slipped, the
+           page has to stop congratulating itself. */
+        metric({ k: "Held-out precision", v: pct(h.precision_mean, 2),
+                 tone: h.precision_worst >= 0.999 ? "ok" : h.precision_worst >= 0.98 ? "warn" : "risk",
                  note: `worst run ${pct(h.precision_worst, 2)}` }),
         metric({ k: "Held-out recall", v: pct(h.recall_mean, 2),
+                 tone: h.recall_mean >= 0.99 ? "ok" : h.recall_mean >= 0.95 ? "warn" : "risk",
                  note: `worst run ${pct(h.recall_worst, 2)}` }),
         metric({ k: "Money in wrong groups", v: money(Math.round(h.false_match_cost_inr_total * 100), "INR"),
                  tone: h.false_match_cost_inr_total > 0 ? "risk" : "ok",
