@@ -527,6 +527,23 @@ Stated plainly rather than buried:
   machine). CI builds the image, starts the container and reconciles a dataset
   through it on every push to `main` — the `docker build · run · reconcile` job
   is green, so the image is verified, just not by hand here.
+- **There is no authentication.** Anyone who can reach the port can read the
+  worklist and close exceptions. That is a deliberate scope choice for a
+  single-tenant demo — adding a login would have bought a judge nothing and cost
+  the reconciliation work — but it is the first thing to add before this touches
+  a real merchant's data. The API is same-origin only (no CORS), rate limited,
+  and ships a `default-src 'self'` CSP, so the surface is small; it is still
+  unauthenticated.
+- **The exception queue is ephemeral in a container.** The engine is stateless
+  and deterministic, so a restart costs nothing there. The queue is SQLite at
+  `RECON_DB_PATH`, which on a free Render instance or a volume-less `docker run`
+  lives on an ephemeral filesystem — notes, assignees and resolution reasons are
+  lost on restart. `render.yaml` carries a commented `disk:` block that fixes it
+  on a paid instance, and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) has the
+  matrix.
+- **A large batch reconciles synchronously inside the request.** There is no job
+  queue: 50k rows is the cap, measured at ~13s here, and that is the number the
+  cap is set by rather than what the engine could eventually chew through.
 - **FX-adjusted international settlements are not modelled.** They need the
   settlement recon report as a join key.
 - The benchmark is **synthetic**, which is what the track asks for, but it is not

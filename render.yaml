@@ -8,6 +8,18 @@ services:
     healthCheckPath: /api/health
     plan: free
     envVars:
+      # Where the exception queue lives. On the free plan this path is inside
+      # the container's ephemeral filesystem, so the worklist — notes,
+      # assignees, resolution reasons — is LOST on every restart and redeploy.
+      # The reconciliation engine is unaffected: it is deterministic and holds
+      # no state, so re-running a month reproduces the same result exactly.
+      # Only the human's work is lost.
+      #
+      # To make the queue durable, move to a paid instance and uncomment the
+      # `disk:` block below; the path here already points at its mount.
+      - key: RECON_DB_PATH
+        value: /var/data/reconciliation.db
+
       # optional — without these the residual resolver runs its heuristic fallback
       - key: ANTHROPIC_API_KEY
         sync: false
@@ -17,3 +29,12 @@ services:
         sync: false
       - key: RAZORPAY_KEY_SECRET
         sync: false
+
+    # Durable state. Render disks require a paid instance type, so this is left
+    # commented rather than shipped broken: a blueprint that fails to deploy on
+    # the plan it declares is worse than one that deploys with a stated limit.
+    #
+    # disk:
+    #   name: recon-data
+    #   mountPath: /var/data
+    #   sizeGB: 1

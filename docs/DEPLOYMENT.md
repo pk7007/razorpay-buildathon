@@ -23,6 +23,35 @@ build time, so a broken generator fails the build rather than shipping.
 > `main`; it is green. If you change the Dockerfile, watch that job rather than
 > trusting a local build you may not be able to run.
 
+## State, and what a restart costs
+
+The reconciliation engine is stateless and deterministic: re-running a month
+reproduces the same groups, the same exceptions and the same numbers. Nothing
+of value is lost by restarting it.
+
+The **exception queue is different** — it holds work a human did: notes, an
+assignee, the reason an exception was closed, the history that makes the close
+auditable. That lives in SQLite at `RECON_DB_PATH`
+(default `data/reconciliation.db`).
+
+| Where it runs | Queue survives a restart? |
+| --- | --- |
+| Local (`uvicorn`) | Yes — the file sits in your working directory |
+| Docker without a volume | **No** — the container filesystem is ephemeral |
+| Render free plan | **No** — free instances have no disk |
+| Render paid + disk | Yes — mount a disk and point `RECON_DB_PATH` at it |
+
+For a demo this is usually fine, and `scripts/demo_reset.py` rebuilds a known
+state in one command. For anything else, mount a volume:
+
+```bash
+docker run -p 8000:8000   -v "$PWD/data:/app/data"   -e RECON_DB_PATH=/app/data/reconciliation.db   ai-finance-controller
+```
+
+`render.yaml` sets `RECON_DB_PATH` to `/var/data/reconciliation.db` and carries
+a commented `disk:` block: uncomment it on a paid instance and the queue becomes
+durable with no other change.
+
 ## Render
 
 `render.yaml` is a ready blueprint:
