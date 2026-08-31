@@ -6,7 +6,7 @@ Built for the **[Razorpay AI Buildathon](https://razorpay.com/buildathon/) — T
 
 [![ci](https://github.com/pk7007/razorpay-buildathon/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pk7007/razorpay-buildathon/actions/workflows/ci.yml)
 
-Python 3.11 · FastAPI · SQLite · MIT · 860 tests
+Python 3.11 · FastAPI · SQLite · MIT · 896 tests
 
 | held-out precision | held-out recall | ₹ in wrong groups | throughput | replay |
 | --- | --- | --- | --- | --- |
@@ -323,7 +323,7 @@ razorpay-buildathon/
 │   └── fonts/                  IBM Plex, self-hosted (the CSP allows no external origin)
 ├── data/datasets/              demo month + 3 benchmark datasets + answer keys
 ├── scripts/                    CLI, dataset generator, demo_reset, verify_razorpay, verify_llm
-├── tests/                      860 tests
+├── tests/                      896 tests
 │   ├── test_financial_correctness.py   the settlement identity vs an independent oracle
 │   ├── test_adversarial.py             attempts to make the matcher confidently wrong
 │   ├── test_ai_boundary.py             the model never sees what rules already decided
@@ -422,10 +422,22 @@ rows.
 ## Testing
 
 ```bash
-python -m pytest -q              # 860 tests
+python -m pytest -q              # 896 tests
 python -m pytest -q -m slow      # + throughput benchmark
 python -m ruff check .           # lint
 ```
+
+Notable among them: an **independent arithmetic oracle** that recomputes the
+settlement identity in plain integers and checks 504 combinations of fee, GST,
+TDS, refund and chargeback against the engine (`test_financial_correctness.py`);
+**17 attempts to make the matcher confidently wrong** — identical amounts, near
+references, cross-currency, duplicate UTRs, a refund shaped like another
+payment (`test_adversarial.py`); the **AI boundary** enforced as a property,
+not a claim (`test_ai_boundary.py`); **real export formats** driven through
+ingestion, mapping, validation, the engine, SQLite and the API
+(`test_messy_end_to_end.py`); **database integrity** under 24 concurrent
+writers (`test_database.py`); and the **complexity curve**, so a quadratic
+regression fails a test rather than a demo (`test_scale.py`).
 
 Covering engine correctness, the conservation invariant, held-out generalisation
 thresholds, generator determinism, every API error path, the LLM contract under a
