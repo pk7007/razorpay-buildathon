@@ -65,10 +65,14 @@ export async function reconcile(root, ctx) {
     const live = rzp.provenance_if_run === "live_test";
     cards.append(sourceCard({
       title: "Razorpay",
-      meta: live ? "test-mode API" : "local fixture",
+      meta: live ? "test-mode API"
+                 : rzp.configured ? "fixture — API unreachable" : "local fixture",
       tone: live ? "ok" : "neutral",
       body: live
         ? "Pulled live from your Razorpay test-mode account."
+        : rzp.configured
+        ? "Credentials are set but the test-mode API could not be reached, so this "
+        + "runs on fixtures. Check the key and secret, then reload."
         : "Fixtures in Razorpay's documented response shape. Not Razorpay data — "
         + "add test-mode keys to pull the real thing.",
       cta: "Reconcile",

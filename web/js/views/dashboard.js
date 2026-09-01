@@ -222,10 +222,17 @@ export async function dashboard(root, ctx) {
               health.resolver === "llm"
                 ? "An LLM resolved the residual tail."
                 : "No model was used. Every number here is deterministic."),
-            kvItem("Razorpay data", rzp.provenance_if_run === "live_test" ? "Test-mode API" : "Local fixture",
+            kvItem("Razorpay data",
+              rzp.provenance_if_run === "live_test" ? "Test-mode API" : "Local fixture",
+              /* Three states, not two: a key can be present and still not work,
+                 and saying "Test-mode API" in that case would label fixtures as
+                 Razorpay data. */
               rzp.provenance_if_run === "live_test"
                 ? "Pulled from Razorpay test mode."
-                : "Fixtures in Razorpay's response shape — not Razorpay data."),
+                : rzp.configured
+                  ? "Credentials are set but the API could not be reached — "
+                    + "runs are using fixtures."
+                  : "Fixtures in Razorpay's response shape — not Razorpay data."),
             kvItem("Replay", m.replay_stable ? "Stable" : "Unstable",
               m.replay_stable ? "Re-running reproduced the same result." : "Re-run differed — investigate."),
             kvItem("Engine time", ms(m.latency_ms),

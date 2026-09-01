@@ -8,6 +8,7 @@ architecture and keeps either file readable in one sitting.
 from __future__ import annotations
 
 import logging
+import time
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
@@ -206,22 +207,66 @@ def reconcile_razorpay(payload: dict | None = None) -> ReconResult:
     return _deps["run"](batch.as_rows(), f"razorpay-{batch.provenance}")
 
 
+# A live probe is a network call, and the dashboard asks for status on every
+# load, so the answer is cached briefly. Short enough that fixing a bad key and
+# reloading shows the truth within a minute.
+_PROBE_TTL_SECONDS = 60.0
+_probe_cache: dict[str, object] = {"at": 0.0, "reachable": None, "reason": ""}
+
+
+def _probe_razorpay() -> tuple[bool | None, str]:
+    """Can we actually reach Razorpay test mode right now?
+
+    Returns (reachable, reason). ``None`` means "not configured, nothing to
+    probe". This exists because *predicting* provenance from the presence of a
+    key is not the same as knowing it: a key with a typo is configured, is
+    well-formed, and still yields fixtures.
+    """
+    if not SETTINGS.has_razorpay:
+        return None, "no credentials configured"
+    now = time.monotonic()
+    if now - float(_probe_cache["at"]) < _PROBE_TTL_SECONDS:
+        return _probe_cache["reachable"], str(_probe_cache["reason"])  # type: ignore[return-value]
+    try:
+        fetch_live(count=1)
+        reachable, reason = True, "test-mode API answered"
+    except RazorpayUnavailable as exc:
+        reachable, reason = False, str(exc)
+    _probe_cache.update({"at": now, "reachable": reachable, "reason": reason})
+    return reachable, reason
+
+
 @router.get("/api/razorpay/status")
 def razorpay_status() -> dict:
-    """What data this instance can actually reach. Never leaks the key itself."""
+    """What data this instance can actually reach. Never leaks the key itself.
+
+    `provenance_if_run` used to be derived from "is a key present?", which meant
+    a mistyped key made the dashboard report **Test-mode API** while every run
+    quietly produced fixtures. Fixture data labelled as live Razorpay data is
+    the single worst thing this endpoint could say, so the answer is now probed
+    rather than predicted.
+    """
     configured = SETTINGS.has_razorpay
     key = SETTINGS.razorpay_key_id
+    reachable, reason = _probe_razorpay()
+    live = bool(configured and reachable)
+
+    if not configured:
+        note = ("No credentials: /api/reconcile/razorpay serves LOCAL FIXTURES in the "
+                "documented Razorpay API response shape. They are not Razorpay data.")
+    elif live:
+        note = "Razorpay test-mode credentials are configured and the API answered."
+    else:
+        note = (f"Credentials are set but the test-mode API could not be reached "
+                f"({reason}). Runs will serve LOCAL FIXTURES until this is fixed.")
+
     return {
         "configured": configured,
         "test_mode": key.startswith("rzp_test_") if key else None,
         "key_hint": (key[:12] + "...") if key else None,
-        "provenance_if_run": "live_test" if configured else "fixture",
-        "note": (
-            "Razorpay test-mode credentials are configured."
-            if configured else
-            "No credentials: /api/reconcile/razorpay serves LOCAL FIXTURES in the "
-            "documented Razorpay API response shape. They are not Razorpay data."
-        ),
+        "reachable": reachable,
+        "provenance_if_run": "live_test" if live else "fixture",
+        "note": note,
     }
 
 

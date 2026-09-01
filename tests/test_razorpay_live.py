@@ -228,3 +228,112 @@ def test_uncaptured_payments_never_reach_reconciliation(test_keys, monkeypatch):
     assert any(p["id"] == "pay_AUTHONLY" for p in batch.payments)
     captured = [p for p in batch.payments if p.get("status") == "captured"]
     assert len(captured) == 2
+
+
+# --------------------------------------------------------------------------- #
+# Provenance is probed, not predicted
+# --------------------------------------------------------------------------- #
+
+
+def test_a_configured_but_broken_key_is_never_reported_as_live(monkeypatch):
+    """`provenance_if_run` used to be derived from "is a key present?".
+
+    A key with a typo is present, is well-formed, passes the rzp_test_ guard,
+    and still yields fixtures — so the dashboard reported "Test-mode API" while
+    every run served fixture data. Fixture data labelled as live Razorpay data
+    is the worst thing this endpoint could say.
+    """
+    import dataclasses
+
+    from fastapi.testclient import TestClient
+
+    from finance_controller import api, api_queue
+    from finance_controller import razorpay_source as rz
+    from finance_controller.api import app
+    from finance_controller.config import SETTINGS
+
+    broken = dataclasses.replace(
+        SETTINGS, razorpay_key_id="rzp_test_NOTAREALKEY99",
+        razorpay_key_secret="notarealsecret",
+    )
+    monkeypatch.setattr(api_queue, "SETTINGS", broken)
+    monkeypatch.setattr(rz, "SETTINGS", broken)
+    monkeypatch.setattr(
+        rz, "fetch_live",
+        lambda *a, **k: (_ for _ in ()).throw(rz.RazorpayUnavailable("auth failed")),
+    )
+    monkeypatch.setattr(api_queue, "fetch_live", rz.fetch_live)
+    api_queue._probe_cache.update({"at": 0.0})
+
+    with TestClient(app) as c:
+        api._hits.clear()
+        status = c.get("/api/razorpay/status").json()
+        api._hits.clear()
+        dataset = c.post("/api/reconcile/razorpay", json={"live": True}).json()["dataset"]
+
+    assert status["configured"] is True
+    assert status["reachable"] is False
+    assert status["provenance_if_run"] == "fixture", (
+        "a key that cannot authenticate was reported as live_test"
+    )
+    assert "fixture" in dataset
+    assert "could not be reached" in status["note"]
+    api_queue._probe_cache.update({"at": 0.0})
+
+
+def test_with_no_credentials_nothing_is_probed_and_nothing_claims_live(monkeypatch):
+    import dataclasses
+
+    from fastapi.testclient import TestClient
+
+    from finance_controller import api, api_queue
+    from finance_controller import razorpay_source as rz
+    from finance_controller.api import app
+    from finance_controller.config import SETTINGS
+
+    none = dataclasses.replace(SETTINGS, razorpay_key_id="", razorpay_key_secret="")
+    monkeypatch.setattr(api_queue, "SETTINGS", none)
+    monkeypatch.setattr(rz, "SETTINGS", none)
+    api_queue._probe_cache.update({"at": 0.0})
+
+    with TestClient(app) as c:
+        api._hits.clear()
+        status = c.get("/api/razorpay/status").json()
+
+    assert status["configured"] is False
+    assert status["reachable"] is None, "an unconfigured instance should not be probed"
+    assert status["provenance_if_run"] == "fixture"
+    assert status["key_hint"] is None, "no key, nothing to hint at"
+    api_queue._probe_cache.update({"at": 0.0})
+
+
+def test_the_status_endpoint_never_returns_the_secret(monkeypatch):
+    import dataclasses
+
+    from fastapi.testclient import TestClient
+
+    from finance_controller import api, api_queue
+    from finance_controller import razorpay_source as rz
+    from finance_controller.api import app
+    from finance_controller.config import SETTINGS
+
+    secret = "supersecret-value-do-not-leak"
+    cfg = dataclasses.replace(
+        SETTINGS, razorpay_key_id="rzp_test_ABCDEFGH1234", razorpay_key_secret=secret)
+    monkeypatch.setattr(api_queue, "SETTINGS", cfg)
+    monkeypatch.setattr(rz, "SETTINGS", cfg)
+    monkeypatch.setattr(
+        rz, "fetch_live",
+        lambda *a, **k: (_ for _ in ()).throw(rz.RazorpayUnavailable("nope")))
+    monkeypatch.setattr(api_queue, "fetch_live", rz.fetch_live)
+    api_queue._probe_cache.update({"at": 0.0})
+
+    with TestClient(app) as c:
+        api._hits.clear()
+        body = c.get("/api/razorpay/status").text
+
+    assert secret not in body, "the key secret was returned by the status endpoint"
+    # the hint is key[:12] — enough to tell two keys apart, not enough to reuse
+    assert "rzp_test_ABC" in body, "the key hint should identify which key is in use"
+    assert "ABCDEFGH1234" not in body, "the full key id was returned, not a hint"
+    api_queue._probe_cache.update({"at": 0.0})
