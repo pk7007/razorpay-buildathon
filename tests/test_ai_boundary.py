@@ -16,9 +16,17 @@ property of the code:
 * whether a model ran at all is recorded per run, not inferred
 
 A model that reruns the whole batch and "improves" the matching would be a
-different product with a different risk profile. The point of the boundary is
-that a wrong answer from the model can cost recall, and can never cost
-precision.
+different product with a different risk profile.
+
+Be precise about what the boundary does and does not buy, because the tempting
+version of this sentence is wrong. The boundary bounds *blast radius*, not
+accuracy: a model can still pair two unrelated residual entries into a group
+that is structurally valid and semantically wrong, and that costs precision --
+`test_a_wrong_pairing_costs_precision_but_only_on_the_residual` measures it
+doing exactly that. What cannot happen is a model changing a rule-decided
+group, inventing an id, claiming an entry twice, or losing a row. So: a bad
+answer costs recall and can cost precision, on the residual only, and the
+residual is a single-digit share of the batch.
 """
 from __future__ import annotations
 
@@ -28,6 +36,7 @@ import pytest
 
 from finance_controller import resolver as resolver_mod
 from finance_controller.config import SETTINGS
+from finance_controller.models import MatchGroup
 from finance_controller.pipeline import run_bundled, run_rows
 
 DATASETS = ["demo", "clean", "realistic", "messy"]
@@ -273,4 +282,99 @@ def test_the_share_each_stage_decided_adds_up(dataset):
     total = m.deterministic_share + m.structural_share + m.resolver_share
     assert abs(total - 1.0) < 0.01, (
         f"stage shares sum to {total}, so the split shown to a judge is not real"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# what the boundary does NOT buy, measured rather than hand-waved
+# --------------------------------------------------------------------------- #
+
+
+def test_a_wrong_pairing_costs_precision_but_only_on_the_residual(monkeypatch):
+    """The honest limit of the claim, pinned to a number.
+
+    A model cannot invent an id or touch a rule-decided group, and every test
+    above proves it. What it *can* do is pair two entries that are both really
+    in the residual and have nothing to do with each other. That group passes
+    admission -- it is structurally valid, the ids are real, nothing is double
+    claimed -- and it is wrong, so it costs precision.
+
+    This test exists because the README used to say a bad answer costs "recall,
+    never precision", which is a stronger claim than the code supports. The
+    boundary bounds the blast radius, not the accuracy: the damage is confined
+    to the residual, and the residual is a single-digit share of the batch.
+    """
+    def mispair(residual, audit):
+        ids = [e.id for e in residual]
+        if len(ids) < 2:
+            return [], residual, resolver_mod._empty_usage()
+        wrong = MatchGroup(
+            group_id="MISPAIR", entry_ids=[ids[0], ids[-1]], stage="agent",
+            rule="llm@test", confidence=0.9, rationale="deliberately wrong",
+        )
+        keep = [e for e in residual if e.id not in (ids[0], ids[-1])]
+        return [wrong], keep, resolver_mod._empty_usage()
+
+    clean = run_bundled("realistic")
+    enable_llm(monkeypatch, mispair)
+    dirty = run_bundled("realistic")
+
+    # the group really was admitted -- otherwise this test proves nothing
+    assert any(g.group_id == "MISPAIR" for g in dirty.groups), (
+        "the mispairing was refused, so this is not measuring what it claims to"
+    )
+    assert clean.metrics.precision == 1.0
+    assert dirty.metrics.precision < 1.0, (
+        "a semantically wrong pairing of two residual entries did not cost "
+        "precision -- if this ever holds, the stronger README claim would be "
+        "true and this test should be deleted, not weakened"
+    )
+
+    # ...and the blast radius is still bounded: rules are untouched, nothing lost
+    def locked(r):
+        return sorted(
+            (tuple(sorted(g.entry_ids)), g.stage, g.rule)
+            for g in r.groups if g.stage in ("deterministic", "structural")
+        )
+
+    assert locked(clean) == locked(dirty), "a model altered a rule-decided group"
+    assert dirty.metrics.total_entries == clean.metrics.total_entries
+
+
+@pytest.mark.parametrize(
+    "broken, why",
+    [
+        ("not a tuple at all", "a bare string"),
+        (([], []), "a 2-tuple"),
+        ((["not a MatchGroup"], [], {}), "groups that are not MatchGroups"),
+        (([], "not a list", {}), "a leftover pile that is not a list"),
+        (([], [], None), "usage that is not a dict"),
+    ],
+)
+def test_a_resolver_that_returns_the_wrong_type_loses_its_answer_not_the_run(
+    broken, why, monkeypatch
+):
+    """A malformed *return* must fail the same way a raised exception does.
+
+    `resolve()` wraps the model call in try/except, which catches anything
+    raised -- and nothing at all if the call returns successfully with rubbish
+    in it. The rubbish then reaches the pipeline, which does `g.entry_ids` on
+    it and dies with an AttributeError: a bad answer turned into an outage,
+    which is precisely what the boundary is supposed to prevent.
+
+    The resolver interface is the seam most likely to be replaced by something
+    this repo did not write, so the shape of what comes back is checked rather
+    than assumed.
+    """
+    enable_llm(monkeypatch, lambda residual, audit: broken)
+    result = run_bundled("realistic")   # must not raise
+
+    assert result.metrics.total_entries > 0
+    grouped = [i for g in result.groups for i in g.entry_ids]
+    accounted = set(grouped) | {e.entry_id for e in result.exceptions}
+    assert accounted == {e.id for e in result.entries}, (
+        f"{why}: conservation broke"
+    )
+    assert any(a.rule == "llm-error-fallback@v1" for a in result.audit), (
+        f"{why}: the run recovered without writing down that the resolver misbehaved"
     )

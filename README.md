@@ -25,14 +25,26 @@ This does four things instead, and each one is checkable in the running app:
 | **Reconciles financial events, not rows** | A refund, a chargeback and a TDS deduction are terms in the settlement equation, not noise to filter out. A partially refunded sale settles for less and still ties. |
 | **Explains every decision with the arithmetic** | Every match and every refusal writes an audit record containing the actual sum. Nothing is "matched (94%)" with no reason attached. |
 | **Carries exceptions across periods** | The queue survives runs. An exception raised in July that a later batch explains closes itself; one that does not keeps its notes, its assignee and its age. |
-| **Uses AI only on the residual uncertainty** | Rules decide first and what they decide is final. A model is shown only what is left — never an entry a rule already placed — and a bad answer from it costs recall, never precision. |
+| **Uses AI only on the residual uncertainty** | Rules decide first and what they decide is final. A model is shown only what is left — never an entry a rule already placed — so a bad answer from it can only ever affect the residual: it cannot change a rule-decided group, invent an id, claim an entry twice, or lose a row. |
 
 The last one is the load-bearing claim, so it is enforced in code rather than
 asserted: `tests/test_ai_boundary.py` checks that the model never sees a
 rule-matched entry, that enabling it leaves every deterministic group byte for
-byte identical, and that a model returning a hallucinated id loses its proposal
-instead of the run. The Overview screen shows the same split measured from the
-batch in front of you:
+byte identical, and that a model returning a hallucinated id, a double claim or
+the wrong type entirely loses its proposal instead of the run.
+
+The bound is on *blast radius*, not on accuracy, and the difference is worth
+being exact about. A model that pairs two residual entries which happen to be
+unrelated produces a group that is structurally valid and semantically wrong,
+and that costs precision — forced on the `realistic` dataset, it takes
+precision from 1.0000 to 0.9985 and recall to 0.9970. What the boundary
+guarantees is that the damage stops there: the residual is the only thing a
+model can touch, and the residual is a single-digit share of the batch. Saying
+it "can never cost precision" would be a stronger claim than the code
+supports, so the project does not make it.
+
+The Overview screen shows the same split measured from the batch in front of
+you:
 
 ```
 How this batch was decided
@@ -42,6 +54,19 @@ How this batch was decided
 ```
 
 That number moves with the data. It is not a diagram.
+
+## What it looks like
+
+Regenerate these with `python scripts/demo_reset.py && python scripts/screenshots.py`,
+so the figures on screen are always the figures the demo actually produces.
+
+| | |
+| --- | --- |
+| **Overview** — where the close stands, and what the money is doing | **Worklist** — exceptions that persist between runs |
+| [![Overview](docs/screenshots/01-overview.png)](docs/screenshots/01-overview.png) | [![Worklist](docs/screenshots/03-worklist.png)](docs/screenshots/03-worklist.png) |
+| **Reconcile** — run a batch and watch the audit trail fill | **Accuracy** — held-out scores, on seeds the matcher never saw |
+| [![Reconcile](docs/screenshots/02-reconcile.png)](docs/screenshots/02-reconcile.png) | [![Accuracy](docs/screenshots/04-accuracy.png)](docs/screenshots/04-accuracy.png) |
+
 
 ## Overview
 
@@ -423,7 +448,7 @@ rows.
 ## Testing
 
 ```bash
-python -m pytest -q              # 898 tests
+python -m pytest -q              # 907 tests
 node --test web/tests/           # 35 frontend tests, no node_modules
 python -m pytest -q -m slow      # + throughput benchmark
 python -m ruff check .           # lint

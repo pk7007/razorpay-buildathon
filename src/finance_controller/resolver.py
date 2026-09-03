@@ -46,7 +46,7 @@ def resolve(
             )
         else:
             try:
-                return _llm_resolve(residual, audit)
+                return _checked(_llm_resolve(residual, audit), residual)
             except Exception as exc:  # noqa: BLE001 - fall back, never crash the run
                 audit.record(
                     stage="agent", rule="llm-error-fallback@v1", inputs=[],
@@ -57,6 +57,35 @@ def resolve(
                     )[:400],
                 )
     return _heuristic_resolve(residual, audit)
+
+
+def _checked(
+    result: object, residual: list[Entry]
+) -> tuple[list[MatchGroup], list[Entry], dict]:
+    """Reject a resolution that is the wrong *shape* before anyone reads it.
+
+    `_admit_resolver_groups` downstream checks what the groups *say* -- unknown
+    ids, double claims. It cannot check that a group is a MatchGroup at all,
+    because by then it is already doing `g.entry_ids`.
+
+    That gap matters because a resolver is the one stage that may be swapped for
+    something the pipeline did not write: a model wrapper, a fine-tuned scorer,
+    a plugin. If one returns a bare string, or a list of dicts, the run dies
+    with an AttributeError -- a bad answer turned into an outage, which is the
+    exact failure mode the boundary exists to prevent. Raising TypeError here
+    puts it back on the path that already handles a misbehaving resolver:
+    fall back to the heuristic, and write down why.
+    """
+    if not (isinstance(result, tuple) and len(result) == 3):
+        raise TypeError(f"resolver returned {type(result).__name__}, expected a 3-tuple")
+    groups, leftover, usage = result
+    if not isinstance(groups, list) or not all(isinstance(g, MatchGroup) for g in groups):
+        raise TypeError("resolver returned groups that are not a list of MatchGroup")
+    if not isinstance(leftover, list) or not all(isinstance(e, Entry) for e in leftover):
+        raise TypeError("resolver returned a leftover pile that is not a list of Entry")
+    if not isinstance(usage, dict):
+        raise TypeError(f"resolver returned {type(usage).__name__} usage, expected a dict")
+    return groups, leftover, usage
 
 
 # --------------------------------------------------------------------------- heuristic
