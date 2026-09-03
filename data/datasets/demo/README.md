@@ -1,14 +1,20 @@
 # The demo month
 
-Nine designed cases and four designed failures, in one batch small enough to
-read end to end. Every row exists to demonstrate one thing, and the expected
-outcome for every row is known in advance — `scripts/demo_reset.py` asserts all
-of them, so a demo never runs on a result nobody checked.
+Thirteen designed cases and four designed failures, in one batch small enough
+to read end to end — 55 records, over the 50-record bar the brief sets. Every
+row exists to demonstrate one thing, and the expected outcome for every row is
+known in advance — `scripts/demo_reset.py` asserts all of them, so a demo
+never runs on a result nobody checked.
 
 This is **synthetic data in the shape of real exports**. It is not Razorpay
 data and is not labelled as such anywhere in the product.
 
 ## What each case is for
+
+The last four are deliberately ordinary. A batch of nothing but edge cases is
+its own kind of dishonesty: it hides whether the plain path still works, and it
+makes an auto-match rate meaningless. These four tie across all four sources
+with no drama, each on a different fee shape and a different date format.
 
 | Rows | Case | What it proves |
 | --- | --- | --- |
@@ -19,8 +25,12 @@ data and is not labelled as such anywhere in the product.
 | `pay_refund` `rfnd_part` `setl_refund` `bank_4` `L-5` | Partial refund inside the payout window | The payout is net of the refund, and still ties |
 | `pay_full_refund` `rfnd_full` `L-6` | Fully refunded sale | No payout is *expected* — absence is the correct answer |
 | `pay_cb` `cbk_1` `setl_cb` `bank_5` `L-7` | Chargeback lost after payout | A clawback is a financial event, not noise |
-| `pay_late` `setl_late` `bank_9` `L-8` | Sold 28 Jul, paid 2 Aug | The month boundary is not a wall |
+| `pay_late` `setl_late` `bank_13` `L-8` | Sold 28 Jul, paid 2 Aug | The month boundary is not a wall |
 | `pay_never` `L-9` | Booked, captured, never settled | The money you actually have to chase |
+| `pay_wallet` `setl_wallet` `bank_9` `L-10` | Wallet sale, ₹15,000 | A fourth instrument with its own rate |
+| `pay_upi2` `setl_upi2` `bank_10` `L-11` | Second zero-MDR UPI, `dd-mm-yyyy` | Zero fees are not a one-off fixture |
+| `pay_nb2` `setl_nb2` `bank_11` `L-12` | Flat fee on ₹4,200, `dd/mm/yyyy` | ₹18 + ₹3.24 GST — a fee that is not a percentage |
+| `pay_tds` `setl_tds` `bank_12` `L-13` | ₹22,000 with 1% TDS, `13 Jul 2026` | TDS at ordinary scale, not just at a crore |
 
 ## The four exceptions it must raise
 

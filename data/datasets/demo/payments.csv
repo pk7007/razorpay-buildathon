@@ -9,3 +9,7 @@ pay_cb,ORD-1007,2026-07-05,4500.00,card,INR
 pay_zero,ORD-1008,2026-07-05,0.00,upi,INR
 pay_late,ORD-1009,2026-07-28,6000.00,card,INR
 pay_never,ORD-1010,2026-07-06,7777.77,card,INR
+pay_wallet,ORD-1011,2026-07-08,15000.00,wallet,INR
+pay_upi2,ORD-1012,09-07-2026,9500.00,upi,INR
+pay_nb2,ORD-1013,10/07/2026,4200.00,netbanking,INR
+pay_tds,ORD-1014,13 Jul 2026,22000.00,card,INR

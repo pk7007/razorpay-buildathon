@@ -526,7 +526,7 @@ Interactive docs at `/docs` when running.
 | Requirement | Where it is |
 | --- | --- |
 | one finance-ops loop | four-way settlement reconciliation, and only that |
-| 50+ record synthetic batch | 125 / 352 / 466 bundled; **58,908** in the benchmark |
+| 50+ record synthetic batch | 55 / 125 / 352 / 466 bundled; **58,908** in the benchmark |
 | match rate reported | auto-match rate, per run and aggregated |
 | exceptions it could not resolve | categorised queue, each with a reason and an action |
 | **throughput** | table above · `--benchmark` · `GET /api/benchmark` |

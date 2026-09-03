@@ -55,8 +55,18 @@ EXPECTED_GROUPS: dict[frozenset[str], str] = {
     frozenset({"pay_refund", "rfnd_part", "setl_refund", "bank_4", "L-5"}): "complete",
     frozenset({"pay_full_refund", "rfnd_full", "L-6"}): "fully_refunded",
     frozenset({"pay_cb", "cbk_1", "setl_cb", "bank_5", "L-7"}): "complete",
-    frozenset({"pay_late", "setl_late", "bank_9", "L-8"}): "complete",
+    # bank_13, not bank_9: bank rows have no id of their own, so their ids are
+    # positional, and the four sales added below sit earlier in the statement.
+    frozenset({"pay_late", "setl_late", "bank_13", "L-8"}): "complete",
     frozenset({"pay_never", "L-9"}): "payout_overdue",
+    # Four more sales, added to put the batch over the 50-record bar the brief
+    # asks for. Each is deliberately ordinary and ties across all four sources:
+    # they exercise a different fee shape and a different date format each, and
+    # they leave the story -- and every exception in it -- exactly as it was.
+    frozenset({"pay_wallet", "setl_wallet", "bank_9", "L-10"}): "complete",
+    frozenset({"pay_upi2", "setl_upi2", "bank_10", "L-11"}): "complete",
+    frozenset({"pay_nb2", "setl_nb2", "bank_11", "L-12"}): "complete",
+    frozenset({"pay_tds", "setl_tds", "bank_12", "L-13"}): "complete",
 }
 
 EXPECTED_EXCEPTIONS: dict[str, str] = {
