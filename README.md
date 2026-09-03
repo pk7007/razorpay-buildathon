@@ -346,7 +346,7 @@ razorpay-buildathon/
 │   ├── styles/                 design tokens, shell, components
 │   ├── js/views/               dashboard, reconcile, worklist, runs, import, accuracy
 │   ├── fonts/                  IBM Plex, self-hosted (the CSP allows no external origin)
-│   └── tests/                  35 frontend tests — `node --test web/tests/`
+│   └── tests/                  35 frontend tests — `npm test --prefix web`
 ├── data/datasets/              demo month + 3 benchmark datasets + answer keys
 ├── scripts/                    CLI, dataset generator, demo_reset, verify_razorpay, verify_llm
 ├── tests/                      898 python tests
@@ -449,7 +449,7 @@ rows.
 
 ```bash
 python -m pytest -q              # 907 tests
-node --test web/tests/           # 35 frontend tests, no node_modules
+npm test --prefix web            # 35 frontend tests, no node_modules
 python -m pytest -q -m slow      # + throughput benchmark
 python -m ruff check .           # lint
 ```

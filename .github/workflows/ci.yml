@@ -44,7 +44,24 @@ jobs:
         # No dependencies, no lockfile, no node_modules — the "no build step"
         # promise holds, and the money formatter is no longer only checked by
         # someone looking at a screen.
-        run: node --test web/tests/
+        # Via npm so the file list lives in web/package.json and nowhere
+        # else. Not `node --test web/tests/`: Node 24 no longer walks a
+        # directory given to --test, it tries to load it as a module.
+        run: npm test --prefix web
+
+      - name: Every frontend test file is actually in that list
+        # An explicit file list cannot walk a directory, so a new test file
+        # would sit there passing zero assertions and nobody would know. This
+        # is the one failure a test suite cannot report on itself.
+        run: |
+          on_disk=$(ls web/tests/*.test.js | xargs -n1 basename | sort | tr '
+' ' ')
+          in_script=$(node -p "require('./web/package.json').scripts.test"             | tr ' ' '
+' | grep '\.test\.js$' | xargs -n1 basename | sort | tr '
+' ' ')
+          echo "on disk:   $on_disk"
+          echo "in script: $in_script"
+          test "$on_disk" = "$in_script"
 
       - name: Held-out accuracy gate
         # fails the build if generalisation regresses, so the README's numbers
