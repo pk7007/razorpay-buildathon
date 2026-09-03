@@ -54,11 +54,8 @@ jobs:
         # would sit there passing zero assertions and nobody would know. This
         # is the one failure a test suite cannot report on itself.
         run: |
-          on_disk=$(ls web/tests/*.test.js | xargs -n1 basename | sort | tr '
-' ' ')
-          in_script=$(node -p "require('./web/package.json').scripts.test"             | tr ' ' '
-' | grep '\.test\.js$' | xargs -n1 basename | sort | tr '
-' ' ')
+          on_disk=$(cd web/tests && ls *.test.js | sort | paste -sd, -)
+          in_script=$(node -p "require('./web/package.json').scripts.test.match(/[^ ]+[.]test[.]js/g).map(p => p.split('/').pop()).sort().join(',')")
           echo "on disk:   $on_disk"
           echo "in script: $in_script"
           test "$on_disk" = "$in_script"
