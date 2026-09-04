@@ -128,7 +128,7 @@ flowchart LR
 
   subgraph RES["resolver"]
     direction TB
-    LLM["LLM<br/><i>temp 0 · strict JSON</i>"]
+    LLM["LLM<br/><i>effort low · strict JSON</i>"]
     HEU["heuristic<br/><i>deterministic</i>"]
     LLM -.->|fails / no key| HEU
   end
@@ -476,7 +476,8 @@ the two commands that fix it, then exits 1 without a traceback:
 
 ```
   [FAIL] The database is in use, so it cannot be moved aside
-         dataeconciliation.db is open in another process -- almost certainly the app.
+         data
+econciliation.db is open in another process -- almost certainly the app.
          Stop the server, run this again, then start it back up:
              python scripts/demo_reset.py
              python -m uvicorn finance_controller.api:app --port 8000
