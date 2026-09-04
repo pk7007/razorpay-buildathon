@@ -139,7 +139,9 @@ identifier. Resolver share on the anomaly datasets is ~2%.
   switched off. Its contract is covered by mocked tests
   (valid proposals accepted, hallucinated ids rejected, low confidence rejected,
   arithmetic-implausible groups rejected, every failure mode falling back to the
-  heuristic). Treat the LLM numbers as unverified until a key is added.
+  heuristic), and the live path is verified by `scripts/verify_llm.py`. What is
+  not measured is whether the model *beats* the heuristic on a hard residual --
+  on the one verified call it matched it exactly.
 - The benchmark is **synthetic**, which is what Track 4 asks for. It models the
   fee/GST/T+2 structure and nine real reconciliation failure modes, but it is not
   a substitute for a merchant's actual month.

@@ -512,23 +512,32 @@ network call, so the tool cannot be pointed at real customer data.
 python scripts/verify_razorpay.py
 ```
 
-**Verification status, run against a live test-mode account:**
+**Verification status: VERIFIED against a live test-mode account.**
 
 | Check | Result |
 | --- | --- |
-| Credentials load | PASS |
+| Credentials load, secret never printed | PASS — masked hint only |
 | Key is test mode (`rzp_test_` prefix) | PASS |
-| SDK installed | PASS |
 | API connection | PASS — `provenance = live_test` |
-| Secret printed anywhere | No — masked key hint only |
-| Account contains data | No — 0 payments, 0 refunds, 0 settlements |
+| Records pulled | 4 payments, 0 refunds, **0 settlements** |
+| Reconciled | 4 entries → 0 groups, 4 exceptions, auto-match **0.0%** |
+| Replay stable | PASS |
+| Persisted and visible to the UI | PASS — run `225dbe1a68da`, all 5 console endpoints |
 
-Connectivity and the ingestion path are verified. The test account is empty, so
-a live run currently returns a batch labelled `razorpay-live_test` with zero
-records rather than silently serving fixtures under a live label. Razorpay test
-mode also does not issue settlements, so even a populated test account exercises
-the ingestion path rather than closing the four-way loop — the bundled datasets
-are what demonstrate the loop.
+**The 0% auto-match is the correct answer, not a failure.** Razorpay test mode
+issues payments but no settlements, so there is no payout side to tie the
+payments against. Every record therefore becomes an exception with a stated
+reason — `missing_in_bank`, plus one `duplicate` where two payments share an
+amount and a date. An engine that produced matches from this input would be
+inventing them.
+
+That is the honest shape of this integration: it proves the **ingestion path**
+end to end — authentication, the test-mode guard, epoch timestamp parsing,
+integer paise, provenance labelling, persistence, and the console reading it
+back — against data Razorpay generated rather than data this repository
+generated. It does not demonstrate a closed four-way loop, because test mode
+cannot supply one. The bundled datasets are what demonstrate the loop.
+
 
 Production or live-mode credentials are **not required** for anything in this
 repository, including the demo.
@@ -807,11 +816,12 @@ Stated plainly rather than buried.
   as the deterministic scorer — so its value on a genuinely harder residual is
   demonstrated by design and by contract tests, not by a measured win. Every
   accuracy number here was produced with it switched off.
-- **The Razorpay test account is empty.** Connectivity, authentication, test-mode
-  enforcement and provenance labelling are verified against the live API; there
-  are simply no payments, refunds or settlements in the account to ingest.
-  Razorpay test mode does not issue settlements, so this path demonstrates
-  ingestion rather than a closed loop.
+- **The Razorpay path ingests but cannot close the loop.** Verified live against
+  a test-mode account holding 4 real payments: authentication, the `rzp_test_`
+  guard, parsing, provenance and persistence all pass. But test mode issues no
+  settlements, so the auto-match rate on that data is 0% and every record is a
+  reasoned exception. This proves ingestion against Razorpay-generated data, not
+  a four-way reconciliation.
 - **No user model.** `RECON_API_TOKEN` protects writes, but there is no login, no
   per-user identity and no authorization — the audit trail records whatever
   `actor` the caller claims. This is the first thing to build before the system

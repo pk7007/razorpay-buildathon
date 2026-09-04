@@ -40,18 +40,28 @@ git check-ignore -v .env        # prints a rule if ignored; silent if NOT
 ## 3. Make sure the account has data
 
 A brand-new test account is empty, and an empty account reconciles to nothing.
-Create a few test payments first — Razorpay's test card:
 
-```
-card    4111 1111 1111 1111
-expiry  any future date
-cvv     any 3 digits
-```
+**Do not reach for the `4111 1111 1111 1111` test card first.** It is an
+international Visa number, and an India-domestic test account rejects it with
+*"International cards are not supported"* — which reads like a broken
+integration and is not one.
+
+Use a method with no card at all. Create a payment link (Dashboard → **Payment
+Links** → **Create Payment Link**, or the API), open it, then pay by either:
+
+- **Netbanking** — pick any bank and Razorpay shows a test simulator with
+  **Success** / **Failure** buttons. This is the path that worked here.
+- **UPI** — enter the test VPA `success@razorpay`.
 
 Docs: <https://razorpay.com/docs/payments/payments/test-card-details/>
 
-Aim for **5–10 payments** and **1–2 refunds** — enough to show a real group, a
-deduction, and an exception.
+Four or five payments is plenty. Be aware of what that does and does not buy
+you: **test mode issues payments but no settlements**, so those payments have no
+payout side to match against and reconcile to a 0% auto-match rate with every
+row a reasoned exception. That is the engine being correct about incomplete
+data. Two payments of the same amount on the same day will also raise a
+`duplicate` — the detector doing its job on genuinely distinct payments, which
+is the safe direction.
 
 > Test-mode settlements often need triggering from the dashboard and may not
 > appear. That is not a failure; the check below reports it and carries on.
@@ -107,68 +117,35 @@ python -m uvicorn finance_controller.api:app --port 8000
 
 ## Current verification status
 
-The check has been run against a live test-mode account. Credentials load, the
-`rzp_test_` prefix is confirmed, the SDK is installed, and the API connects with
-`provenance = live_test`. The secret is never printed — only a masked key hint.
+**Verified.** `scripts/verify_razorpay.py` exits 0 against a live test-mode
+account. Credentials load, the `rzp_test_` prefix is confirmed, the API connects
+with `provenance = live_test`, and the secret is never printed — only a masked
+key hint.
 
-The one failing check is data: the account holds 0 payments, 0 refunds and 0
-settlements, so a live run returns a batch labelled `razorpay-live_test`
-containing zero records. It does **not** fall back to fixtures under a live
-label, which is the behaviour that matters.
+Measured on the account as it stands:
 
-Razorpay test mode also does not issue settlements. Even a populated test
-account therefore exercises the ingestion path rather than closing the four-way
-loop — the bundled datasets are what demonstrate the loop, and the Razorpay
-screen is what demonstrates the ingestion is real.
-
-If you populate the account, say the sentence explicitly in the video: **"This
-is Razorpay's own test-mode data, not data I generated."** Do not describe the
-live path as closing the loop until settlements actually appear — overstating
-this would cost more credibility than the gap itself.
-
----
-
-## Safety
-
-The integration refuses to run against anything but test mode:
-
-```python
-if not SETTINGS.razorpay_key_id.startswith("rzp_test_"):
-    raise RazorpayUnavailable("refusing to run: key is not a test-mode key")
-```
-
-A live key would pull **real customer payment data** into a demo tool. There is
-no flag to override this, deliberately.
-
-Also true by design:
-
-- `fetch_live()` **raises** rather than silently falling back, so fixture data
-  can never be presented as live
-- the secret is never printed, logged, or returned by any endpoint — the status
-  endpoint shows only a 12-character prefix of the *public* key id
-- `.env`, `*.key`, `*.pem` and `credentials.json` are all gitignored
-
-## If it fails
-
-| Message | Fix |
+| | |
 | --- | --- |
-| `RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not set` | `.env` missing or not loaded — check you are running from the repo root |
-| `not a test-mode key` | You copied a live key. Switch the dashboard to Test Mode and regenerate |
-| `razorpay package is not installed` | `pip install razorpay` |
-| `API call failed: BadRequestError` | Key/secret mismatch — regenerate and copy both together |
-| `The account returned no data` | Empty test account — create test payments (step 3) |
-| `No settlements in this account` | Expected on many test accounts. Not a failure |
+| Pulled | 4 payments, 0 refunds, 0 settlements |
+| Reconciled | 4 entries → 0 groups, 4 exceptions |
+| Auto-match rate | 0.0% |
+| Gross processed | ₹27,500.50, all of it in exception |
+| Replay | stable |
+| Persisted | run `225dbe1a68da`, visible to all 5 console endpoints |
 
-## What this does and does not prove
+**The 0% is correct.** Razorpay test mode issues payments but no settlements, so
+there is no payout side to match against. Each payment becomes a
+`missing_in_bank` exception with a stated reason, plus one `duplicate` where two
+payments share an amount and a date — the duplicate detector firing on genuinely
+distinct payments, which is the safe direction: it raises a question for a human
+rather than silently merging them.
 
-**Does:** the ingestion path handles Razorpay's real response shapes — epoch
-timestamps, integer paise, prefixed ids, refunds keyed by `payment_id`, reported
-fees treated as `actual` rather than re-estimated.
+So this integration proves the **ingestion path** against data Razorpay
+generated — authentication, the test-mode guard, epoch parsing, integer paise,
+provenance labelling, persistence, and the UI reading it back. It does not
+demonstrate a closed four-way loop, and the README does not claim it does.
 
-**Does not:** that the engine handles a *real merchant's* month. Test-mode data
-is generated by you and is far tidier than production: no chargebacks in flight,
-no bank charges, no FX, no partial-capture edge cases. That gap is stated in the
-README and should stay stated.
-
-`tests/test_razorpay_live.py` exercises this whole path against a stand-in for
-the SDK, so the code is covered whether or not credentials exist.
+In the video, the accurate sentence is: **"This is Razorpay's own test-mode
+data, not data I generated."** Do not extend that to the loop — the bundled
+datasets are what close it, and they are the honest place for the accuracy
+numbers.
