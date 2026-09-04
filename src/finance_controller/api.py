@@ -266,7 +266,7 @@ async def _observability(request: Request, call_next):
 
 
 _DATASET_BLURB = {
-    "demo": "Nine designed cases in real export formats — zero-MDR UPI, a ₹1.25cr "
+    "demo": "Thirteen designed cases in real export formats — zero-MDR UPI, a ₹1.25cr "
     "payout with TDS, a partial refund, a lost chargeback, a payout that crossed "
     "the month end, and four things that should not reconcile.",
     "clean": "Well-behaved month — fees, GST, a T+2 payout cycle, one batch, "
