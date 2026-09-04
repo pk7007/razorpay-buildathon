@@ -1,9 +1,23 @@
 # Live demo — 5 minutes
 
-**Setup:** `python -m uvicorn finance_controller.api:app --port 8000`, then open
-`http://localhost:8000`. Start with an **empty worklist** (`rm -f
-data/reconciliation.db*`) — the arc of the demo is watching it fill and then
-clear itself.
+**Setup**, in this order — the reset cannot run while the server holds the
+database open:
+
+```bash
+python scripts/demo_reset.py                                   # must print 23 PASS, 0 FAIL
+python -m uvicorn finance_controller.api:app --port 8000
+```
+
+Then open `http://localhost:8000`. `demo_reset` leaves the worklist with one
+item **investigating** and one **resolved**, so the queue looks like a day in
+progress rather than a wall of untouched rows. Do not empty the database
+instead: the reset is what checks the state against an answer key, and "it ran
+without an error" is not the same as producing the expected 13 groups and 4
+exceptions.
+
+**Record with the LLM off.** Comment out `ANTHROPIC_API_KEY` in `.env` before
+starting. Every number below was produced that way, and it removes a network
+round-trip from the middle of a live demo.
 
 The line to land: **this is not a matcher, it is a reconciliation workflow.**
 
@@ -35,8 +49,8 @@ The line to land: **this is not a matcher, it is a reconciliation workflow.**
 
 | # | Do | Shows | Say |
 | --- | --- | --- | --- |
-| 13 | Terminal: `python scripts/run_reconciliation.py --benchmark` | ~59,000 records, ~24,900/s | *"Throughput: 59,000 records in four seconds, single process."* |
-| 14 | Delete `ANTHROPIC_API_KEY`, re-run | resolver flips to heuristic, everything still works | *"That's the LLM gone. Every number still stands."* |
+| 13 | Terminal: `python scripts/run_reconciliation.py --benchmark` | 58,908 records in ~4-5 s | *"Fifty-nine thousand records in about four seconds, single process."* — quote the number on your screen, not one from here; throughput moves with the machine |
+| 14 | Point at the **This run** panel: *Resolver — deterministic only* | the whole demo already ran with no model | *"Everything you just saw ran with the LLM switched off. That is the floor, not the ceiling."* — if you kept the key on instead, uncomment it, restart, and re-run to show the resolver flip |
 | 15 | **Audit trail** tab | one record per decision | *"An LLM should never decide where your money went. It should only make a suggestion that a rule then checks. That's the whole architecture."* |
 
 ---
@@ -50,12 +64,16 @@ argument.
 ## Backup answers
 
 **"Is this real Razorpay data?"**
-No, and the app says so itself — `/api/razorpay/status` reports `fixture`. The
-fixtures use the documented API response shape (epoch timestamps, integer paise,
-`pay_`/`rfnd_` ids, refunds naming their payment by id), so the *ingestion path*
-is genuinely exercised. With test-mode credentials the same endpoint pulls live
-and labels itself `live_test`. It refuses to run at all against a non-`rzp_test_`
-key.
+The bundled datasets are synthetic — that is what Track 4 asks for. But the
+Razorpay integration is live: with test-mode credentials configured,
+`/api/razorpay/status` reports `live_test` and `reachable: true`, and a verified
+run pulled 4 real payments from a test-mode account. Be precise about what that
+proves — Razorpay test mode issues no settlements, so those payments have no
+payout side to match against and reconcile to a 0% auto-match rate with every
+row a reasoned exception. It proves the **ingestion path** against
+Razorpay-generated data, not a closed four-way loop. Without credentials the
+same endpoint serves clearly labelled `fixture` data and says so. It refuses to
+run at all against a non-`rzp_test_` key.
 
 **"What about my bank's CSV?"**
 Show `POST /api/ingest/preview`. Column detection is verified against HDFC,
