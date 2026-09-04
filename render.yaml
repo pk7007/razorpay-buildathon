@@ -28,6 +28,14 @@ services:
       - key: RAZORPAY_KEY_ID
         sync: false
       - key: RAZORPAY_KEY_SECRET
+
+      # Optional, and strongly recommended for a public URL. Set it here and
+      # every state-changing request -- running a reconciliation, closing an
+      # exception, adding a note -- must send it as the X-API-Token header.
+      # Reads stay open, so the dashboard is still shareable read-only.
+      # Leave unset and anyone with the link can edit the worklist.
+      - key: RECON_API_TOKEN
+        sync: false
         sync: false
 
     # Durable state. Render disks require a paid instance type, so this is left
