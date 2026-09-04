@@ -89,6 +89,11 @@ dataset the split is 95.1% structural, 2.4% deterministic, 2.4% resolver.
 | Throughput | Timed at four batch sizes | `--benchmark` |
 | Honest exception list | Non-zero, categorised, each with a reason and an action | `GET /api/exceptions` |
 
+The buildathon asks for the work to be shown as **a public repo, a five-minute
+pitch video, and the architecture**. A hosted URL is not among them, which is
+why this repository ships a deployment *configuration* that CI exercises on
+every push rather than a running instance — see Deployment.
+
 Match rate and accuracy are different numbers and are reported separately. Match
 rate is the share of records the engine placed into a group. Accuracy is whether
 those groups were correct, which requires ground truth — so the hand-authored
@@ -868,8 +873,12 @@ Stated plainly rather than buried.
   same-day payment triples summing to the identical rupee, documented rather
   than tuned away.
 - **The Docker image is not built locally**, only in CI.
-- **Not deployed.** Configuration is present and untested against a live Render
-  instance.
+- **Not deployed.** A hosted URL is not a submission requirement, so the
+  blueprint is included and exercised by CI rather than run. On Render's free
+  plan it would spin down after ~15 minutes idle — a ~50 s cold start — and its
+  ephemeral filesystem would drop the exception queue on every restart, which
+  would undercut the one feature worth showing. That is a deliberate choice, not
+  an unfinished task.
 
 ## Project structure
 
