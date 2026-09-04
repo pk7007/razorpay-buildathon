@@ -132,8 +132,9 @@ identifier. Resolver share on the anomaly datasets is ~2%.
   floor, not a best case. With `ANTHROPIC_API_KEY` set the LLM handles the
   residual tail instead; `resolver_mode`, token counts and USD cost are reported
   on every run.
-- **The LLM path has not been exercised against the live API** — no key was
-  available in the build environment. Its contract is covered by mocked tests
+- **The LLM path has not been exercised against the live API.** A key is
+  configured but returns HTTP 401, so `scripts/verify_llm.py` fails at the live
+  call; see [`LLM.md`](LLM.md). Its contract is covered by mocked tests
   (valid proposals accepted, hallucinated ids rejected, low confidence rejected,
   arithmetic-implausible groups rejected, every failure mode falling back to the
   heuristic). Treat the LLM numbers as unverified until a key is added.

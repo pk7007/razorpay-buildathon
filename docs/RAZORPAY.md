@@ -105,19 +105,26 @@ python -m uvicorn finance_controller.api:app --port 8000
 
 ---
 
-## After it passes — update the claims
+## Current verification status
 
-The README currently says the Razorpay path is unverified. Once the check
-passes, that is no longer true and the README should say what you actually ran:
+The check has been run against a live test-mode account. Credentials load, the
+`rzp_test_` prefix is confirmed, the SDK is installed, and the API connects with
+`provenance = live_test`. The secret is never printed — only a masked key hint.
 
-- `README.md` → **Known limitations**: remove *"The LLM path has not been run
-  against the live API"* only if you also added an `ANTHROPIC_API_KEY`; replace
-  the Razorpay line with the real numbers (payments pulled, auto-match rate).
-- In the video, say the sentence explicitly: **"This is Razorpay's own test-mode
-  data, not data I generated."**
+The one failing check is data: the account holds 0 payments, 0 refunds and 0
+settlements, so a live run returns a batch labelled `razorpay-live_test`
+containing zero records. It does **not** fall back to fixtures under a live
+label, which is the behaviour that matters.
 
-Do not update those claims until the check actually passes. Overstating this is
-the one thing that would cost more credibility than the gap itself.
+Razorpay test mode also does not issue settlements. Even a populated test
+account therefore exercises the ingestion path rather than closing the four-way
+loop — the bundled datasets are what demonstrate the loop, and the Razorpay
+screen is what demonstrates the ingestion is real.
+
+If you populate the account, say the sentence explicitly in the video: **"This
+is Razorpay's own test-mode data, not data I generated."** Do not describe the
+live path as closing the loop until settlements actually appear — overstating
+this would cost more credibility than the gap itself.
 
 ---
 

@@ -5,6 +5,7 @@ use the header layouts real Indian bank statements actually arrive with.
 """
 from __future__ import annotations
 
+import dataclasses
 import io
 
 import pytest
@@ -176,7 +177,14 @@ def test_fixtures_are_labelled_and_never_claim_to_be_live():
     assert "NOT pulled from Razorpay" in b.note
 
 
-def test_live_pull_refuses_without_credentials_rather_than_faking():
+def test_live_pull_refuses_without_credentials_rather_than_faking(monkeypatch):
+    """Patched empty, not assumed empty -- see the note in test_razorpay_live."""
+    from finance_controller import razorpay_source as rz
+
+    monkeypatch.setattr(
+        rz, "SETTINGS",
+        dataclasses.replace(rz.SETTINGS, razorpay_key_id="", razorpay_key_secret=""),
+    )
     with pytest.raises(RazorpayUnavailable):
         fetch_live()
 

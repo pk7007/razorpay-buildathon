@@ -147,11 +147,19 @@ the oversized-residual cap is enforced before a client is even constructed, that
 malformed and truncated replies yield nothing rather than crashing, and that
 every failure mode degrades to the heuristic.
 
-**Not verified:** that a real model returns *useful* groupings. No API key was
-available while this was built, so the live branch has never been executed
-against Anthropic. `scripts/verify_llm.py` closes that in one command.
+**Not verified:** that a real model returns *useful* groupings. A key is now
+configured, but `scripts/verify_llm.py` fails at the live call with HTTP 401 —
+`AuthenticationError: API key is invalid`. Everything up to that point passes:
+prompt construction, injection flattening, the residual-only guarantee, the
+oversized-residual cap, and the heuristic baseline. The live branch has still
+never returned a real proposal.
 
-Until it is run, the honest claim is the one the README makes: the LLM path is
+The failure is itself informative about the degradation path. With an invalid
+key present, a run reports `resolver_mode: heuristic`, `llm_calls: 0`,
+`llm_cost_usd: 0.0`, writes `llm-error-fallback@v1` to the audit trail with the
+underlying error, and finishes with precision and recall unchanged. A key being
+*present* is never reported as the model being *used*.
+
+So the honest claim is the one the README makes: the LLM path is
 contract-tested but unverified live, and **every number published here was
-produced without it**. That is the floor, not the ceiling — which is a stronger
-position to argue from anyway.
+produced without it**. That is the floor, not the ceiling.

@@ -280,9 +280,14 @@ def test_each_row_rounds_independently():
 # --------------------------------------------------------------------------- #
 
 
-def test_two_hundred_and_forty_combinations_agree_with_the_oracle():
+def test_every_combination_agrees_with_the_oracle():
     """A single assertion over the whole space, so a regression anywhere in the
-    equation fails one obvious test rather than a scattering of them."""
+    equation fails one obvious test rather than a scattering of them.
+
+    Named for the space rather than a count: this used to say "two hundred and
+    forty" while the product of its own inputs was 504, and a number baked into
+    a test name goes stale the moment someone adds a rate to GROSSES.
+    """
     disagreements = []
     for gross, (method, pct, flat), tds, (ref, cb) in itertools.product(
         GROSSES, FEE_RULES, TDS_RATES, DEDUCTIONS

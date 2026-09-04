@@ -3,10 +3,16 @@
 Base URL when running locally: `http://localhost:8000`.
 Interactive OpenAPI docs are served at `/docs`, the raw schema at `/openapi.json`.
 
-There is **no authentication**, because there is nothing to authenticate against:
-the service stores nothing, owns no account and returns only what you sent it,
-reconciled. See [`ARCHITECTURE.md`](ARCHITECTURE.md#no-database-no-auth) for why
-that is a decision rather than an omission.
+**Authentication is optional and off by default.** Set `RECON_API_TOKEN` and
+every state-changing request must present it as an `X-API-Token` header; reads
+stay open, so a deployed dashboard remains shareable. Unset, which is what a
+local demo wants, the service is open.
+
+What does not exist is a *user model*: there is no login, no per-user identity
+and no authorization, so the audit trail records whatever `actor` a caller
+claims. The reconciliation engine itself is stateless and stores nothing; the
+exception queue is the part that persists. See the README's Security and
+Limitations sections.
 
 ## Conventions
 

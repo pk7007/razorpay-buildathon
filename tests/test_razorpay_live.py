@@ -109,8 +109,18 @@ def _install(monkeypatch, client):
 # ------------------------------------------------------------------- guards
 
 
-def test_missing_credentials_raise_rather_than_fall_back():
-    """A silent fallback is how fixture data gets mistaken for live data."""
+def test_missing_credentials_raise_rather_than_fall_back(monkeypatch):
+    """A silent fallback is how fixture data gets mistaken for live data.
+
+    The absent credentials are patched in rather than assumed: this used to
+    read whatever the developer had in `.env`, so following the README's own
+    setup instructions turned the suite red. A guard test has to control its
+    own inputs or it is testing the machine, not the guard.
+    """
+    monkeypatch.setattr(
+        rz, "SETTINGS",
+        dataclasses.replace(rz.SETTINGS, razorpay_key_id="", razorpay_key_secret=""),
+    )
     with pytest.raises(rz.RazorpayUnavailable, match="not set"):
         rz.fetch_live()
 
