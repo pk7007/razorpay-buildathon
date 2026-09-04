@@ -273,7 +273,9 @@ def test_a_configured_but_broken_key_is_never_reported_as_live(monkeypatch):
         lambda *a, **k: (_ for _ in ()).throw(rz.RazorpayUnavailable("auth failed")),
     )
     monkeypatch.setattr(api_queue, "fetch_live", rz.fetch_live)
-    api_queue._probe_cache.update({"at": 0.0})
+    # a full reset, not just the timestamp: leaving `reachable` behind lets a
+    # previous test's answer survive into this one
+    api_queue._probe_cache.update({"at": None, "reachable": None, "reason": ""})
 
     with TestClient(app) as c:
         api._hits.clear()

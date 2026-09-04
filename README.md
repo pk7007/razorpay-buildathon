@@ -405,6 +405,33 @@ tests.
 **Status.** Fixed. Held-out accuracy unchanged, so the guard is inert on the
 shipped path.
 
+### The Razorpay probe answered from an empty cache on a cold start
+
+**Symptom.** `/api/razorpay/status` returned `reachable: null` and
+`provenance_if_run: "fixture"` on a freshly started machine, even with working
+credentials. It corrected itself within a minute. CI caught it first, as a test
+that passed locally and failed on the runner.
+
+**Root cause.** The probe result is cached for 60 seconds, and the cache
+initialised its timestamp to `0.0` as a "never probed" sentinel.
+`time.monotonic()` counts from an arbitrary origin — on Linux, boot — so on a
+machine that started seconds ago, `now - 0.0` is *under* the TTL and the
+sentinel reads as "probed a moment ago". The endpoint then answered from an
+empty cache instead of probing.
+
+**Why it mattered.** The affected call is the first one after a deploy, on a
+cold container, which is exactly when someone is looking. The endpoint exists to
+avoid reporting fixtures as live data, and this made it under-report the
+opposite way.
+
+**Fix.** `None`, not `0.0`, as the never-probed sentinel, with an explicit
+`is not None` check before the TTL comparison. The test that exposed it now
+resets the whole cache rather than just the timestamp, since leaving `reachable`
+behind let one test's answer survive into another.
+
+**Status.** Fixed. The suite is green both with and without credentials
+configured, which is now checked deliberately.
+
 ### Tests passed only on a machine with no credentials
 
 **Symptom.** Two guard tests failed once `.env` contained real Razorpay

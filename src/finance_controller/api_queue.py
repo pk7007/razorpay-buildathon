@@ -211,7 +211,13 @@ def reconcile_razorpay(payload: dict | None = None) -> ReconResult:
 # load, so the answer is cached briefly. Short enough that fixing a bad key and
 # reloading shows the truth within a minute.
 _PROBE_TTL_SECONDS = 60.0
-_probe_cache: dict[str, object] = {"at": 0.0, "reachable": None, "reason": ""}
+# `at` is None until the first probe, never 0.0. time.monotonic() counts from an
+# arbitrary origin -- on Linux, boot -- so on a machine that started seconds ago
+# (a CI runner, a cold container) `now - 0.0` is under the TTL and a 0.0 sentinel
+# reads as "probed a moment ago". The status endpoint would then answer from an
+# empty cache and report reachable=None on the one call that matters most: the
+# first one after a deploy.
+_probe_cache: dict[str, object] = {"at": None, "reachable": None, "reason": ""}
 
 
 def _probe_razorpay() -> tuple[bool | None, str]:
@@ -225,7 +231,8 @@ def _probe_razorpay() -> tuple[bool | None, str]:
     if not SETTINGS.has_razorpay:
         return None, "no credentials configured"
     now = time.monotonic()
-    if now - float(_probe_cache["at"]) < _PROBE_TTL_SECONDS:
+    at = _probe_cache["at"]
+    if at is not None and now - float(at) < _PROBE_TTL_SECONDS:  # type: ignore[arg-type]
         return _probe_cache["reachable"], str(_probe_cache["reason"])  # type: ignore[return-value]
     try:
         fetch_live(count=1)
