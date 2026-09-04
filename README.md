@@ -459,6 +459,33 @@ behind let one test's answer survive into another.
 **Status.** Fixed. The suite is green both with and without credentials
 configured, which is now checked deliberately.
 
+### `demo_reset.py` crashed with a traceback if the app was running
+
+**Symptom.** On Windows, running the reset while the server was up died with
+`PermissionError: [WinError 32] The process cannot access the file because it is
+being used by another process`, plus a two-frame traceback out of `shutil.move`.
+
+**Root cause.** The reset renames the database aside rather than deleting it, and
+Windows will not rename a file another process holds open. That process is
+essentially always the app itself. Nothing was actually broken and no data was
+at risk — but a raw traceback reads like the tool is broken, and the moment this
+happens is usually the moment before a demo.
+
+**Fix.** The rename is wrapped, and the failure now says what happened, why, and
+the two commands that fix it, then exits 1 without a traceback:
+
+```
+  [FAIL] The database is in use, so it cannot be moved aside
+         dataeconciliation.db is open in another process -- almost certainly the app.
+         Stop the server, run this again, then start it back up:
+             python scripts/demo_reset.py
+             python -m uvicorn finance_controller.api:app --port 8000
+         Nothing was changed and no data was lost.
+```
+
+**Status.** Fixed. Verified in both directions — the message on a locked
+database, and 23/23 on the happy path.
+
 ### A populated `.env` made the test suite bill the Anthropic API
 
 **Symptom.** After a working Anthropic key was added, `pytest` went from about

@@ -115,7 +115,23 @@ def move_db_aside() -> Path | None:
         return None
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     backup = db.with_name(f"{db.stem}.{stamp}.bak{db.suffix}")
-    shutil.move(str(db), str(backup))
+    try:
+        shutil.move(str(db), str(backup))
+    except PermissionError:
+        # Windows will not rename a file another process holds open, and that
+        # process is almost always the app itself. The traceback that used to
+        # surface here reads like the reset is broken; it is not, the server is
+        # simply running. Worth a clear message, because the moment this
+        # happens is usually the moment before a demo.
+        say(BAD, "The database is in use, so it cannot be moved aside",
+            "\n".join([
+                f"{db} is open in another process -- almost certainly the app.",
+                "Stop the server, run this again, then start it back up:",
+                "    python scripts/demo_reset.py",
+                "    python -m uvicorn finance_controller.api:app --port 8000",
+                "Nothing was changed and no data was lost.",
+            ]))
+        raise SystemExit(1) from None
     for suffix in ("-wal", "-shm"):
         side = Path(str(db) + suffix)
         if side.exists():
