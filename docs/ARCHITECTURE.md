@@ -71,7 +71,7 @@ it is — this is what drives the "recoverable" rupee figure.
 
 Input = the entries no deterministic rule placed. Two interchangeable backends:
 
-- **`llm`** — one call, `temperature=0`, strict JSON contract
+- **`llm`** — one call, `effort: low`, strict JSON contract
   (`{"groups":[{"entry_ids,confidence,rationale}]}`). Proposals below the
   confidence threshold or naming unknown ids are rejected and audited. Token
   counts and USD cost are recorded.
@@ -96,7 +96,9 @@ matching settlement named), `duplicate` (same amount booked twice), … Each row
 inputs, rule@version, outcome, confidence, rationale. The CLI writes it to
 `out/audit.jsonl`. `metrics.result_fingerprint()` hashes the groups + exceptions;
 `pipeline.run_rows` re‑runs once and sets `replay_stable` from whether the
-fingerprints match. LLM calls are pinned to `temperature=0`.
+fingerprints match. LLM calls carry no sampling parameters: the current
+Claude models reject them, so a model answer is made safe by the validation
+it passes afterwards, not by the settings it was produced under.
 
 ## Metrics (`metrics.py`)
 

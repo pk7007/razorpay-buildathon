@@ -253,7 +253,7 @@ rule-decided group, inventing an id, double-claiming, or losing a row. Claiming
 it "can never cost precision" would be stronger than the code supports, so this
 project does not claim it.
 
-Bounds on the call itself: temperature 0, strict JSON, 20 s timeout, 2 retries,
+Bounds on the call itself: strict JSON, `effort: low`, 20 s timeout, 2 retries,
 a 150-entry cap above which the heuristic is used instead, and bank narration —
 the one field an outsider can write into — flattened and truncated before it
 reaches the prompt.
@@ -405,6 +405,33 @@ tests.
 **Status.** Fixed. Held-out accuracy unchanged, so the guard is inert on the
 shipped path.
 
+### `temperature=0` made the live LLM path unreachable
+
+**Symptom.** `scripts/verify_llm.py` failed at the one step that matters — the
+real API call — with `BadRequestError: 400 … \`temperature\` is deprecated for
+this model`. Every other check in the script passed.
+
+**Root cause.** The resolver sent `temperature=0` on every call. Sampling
+parameters were removed on the current Claude models and now return a 400, so
+the live branch could not run at all on `claude-sonnet-5`. Nothing caught it,
+because the contract tests exercise a stand-in for the SDK, and a stand-in
+accepts any keyword you hand it. A mocked test proves you call the SDK the way
+you *think* it works; it cannot tell you the real API disagrees.
+
+**Fix.** The parameter is gone, replaced by `output_config: {effort: "low"}` —
+this is a small, strictly-shaped classification over a handful of rows, not a
+reasoning problem. The test now asserts the *absence* of sampling parameters
+rather than a specific value, so the same drift fails loudly next time.
+
+**The honest consequence.** `temperature=0` was cited as one of the bounds on
+the model call, and it is not replaceable by another parameter. So that claim
+has been dropped rather than substituted: what makes a model answer safe to
+admit here is the validation it passes afterwards — real ids, arithmetic that
+reconciles, conservation — not the sampling settings it was produced under.
+
+**Status.** Fixed and verified live: one call, $0.0068, every proposal
+validated.
+
 ### The Razorpay probe answered from an empty cache on a cold start
 
 **Symptom.** `/api/razorpay/status` returned `reachable: null` and
@@ -431,6 +458,35 @@ behind let one test's answer survive into another.
 
 **Status.** Fixed. The suite is green both with and without credentials
 configured, which is now checked deliberately.
+
+### A populated `.env` made the test suite bill the Anthropic API
+
+**Symptom.** After a working Anthropic key was added, `pytest` went from about
+ten seconds to over ten minutes — and every one of those minutes was making
+real, billed API calls.
+
+**Root cause.** `config.py` calls `load_dotenv()` at import, so a populated
+`.env` puts a live key into `SETTINGS`. `SETTINGS.has_llm` then reads true for
+the whole suite, and every `run_bundled()` in every test resolved its residual
+through the live API instead of the heuristic. Nothing was wrong with any
+individual test; the suite simply inherited the developer's credentials.
+
+**Why it mattered more than the runtime.** Someone clones this repository,
+follows the setup section of this README, runs `pytest` — and is charged for it,
+with results that now depend on a network. That is a bad thing to ship in a
+public repo, and the cost is invisible until the bill arrives.
+
+**Fix.** `tests/conftest.py` now blanks `ANTHROPIC_API_KEY`, `RAZORPAY_KEY_ID`
+and `RAZORPAY_KEY_SECRET` before `finance_controller` is imported.
+`load_dotenv()` does not overwrite a variable already present in `os.environ`,
+so this wins over `.env` without touching the file. It weakens nothing: tests
+that exercise those branches already inject their own settings, which is what
+such a test has to do anyway. The live paths are verified deliberately, by
+`scripts/verify_llm.py` and `scripts/verify_razorpay.py`, rather than as a side
+effect of running the suite.
+
+**Status.** Fixed. 907 tests in about 20 seconds with a fully populated `.env`,
+and no billed call.
 
 ### Tests passed only on a machine with no credentials
 
@@ -492,26 +548,31 @@ and is not in the critical path.
 python scripts/verify_llm.py
 ```
 
-**Verification status:** the offline path — bounds, cost accounting, prompt
-construction, injection flattening, refusal of hallucinated ids and
-non-reconciling amounts — passes end to end. The live API call **fails
-authentication** with the key currently configured (HTTP 401). The live LLM path
-is therefore **not verified**.
+**Verification status: VERIFIED against the live Anthropic API.**
 
-The failure is worth reporting precisely, because it demonstrates the intended
-degradation. With an invalid key present, a reconciliation run reports:
+| Check | Result |
+| --- | --- |
+| Credentials load, never printed | PASS |
+| SDK installed (`anthropic` 0.96.0) | PASS |
+| Only the residual is sent | PASS |
+| Untrusted narration flattened before the prompt | PASS |
+| One real API call | PASS — 931 in / 264 out tokens, $0.0068, 3,305 ms |
+| Every proposal named real ids and reconciled | PASS — none refused |
+| Model vs heuristic on this input | Same answer — reported, not hidden |
 
-```
-resolver_mode : heuristic
-llm_calls     : 0
-llm_cost_usd  : 0.0
-audit         : llm-error-fallback@v1 — AuthenticationError: 401 …
-precision     : 1.0    recall : 1.0
-```
+Extrapolated cost is roughly **$0.97 per 1,000 residual entries**. On the
+verification input the model reached the same groupings as the deterministic
+scorer, which is reported rather than buried: the model is insurance for the
+harder tail, not a headline number.
 
-The run does not fail, does not claim a model was used, does not bill anything,
-and writes the reason to the audit trail. A key being *present* is never
+Degradation is verified too. With no key, or a broken one, a run reports
+`resolver_mode: heuristic`, `llm_calls: 0`, `llm_cost_usd: 0.0`, writes
+`llm-error-fallback@v1` to the audit trail with the underlying error, and
+finishes with precision and recall unchanged. A key being *present* is never
 reported as the model being *used*.
+
+Every accuracy number published in this README was still produced with the LLM
+switched off — that is the floor, and the floor is the honest claim.
 
 Design notes: [`docs/LLM.md`](docs/LLM.md).
 
@@ -741,11 +802,11 @@ remains in git history.
 
 Stated plainly rather than buried.
 
-- **The live LLM path is unverified.** The configured Anthropic key returns HTTP
-  401. The offline branch is fully exercised against a stand-in for the SDK in
-  `tests/test_llm_live.py`, and `scripts/verify_llm.py` will prove the live path
-  in one command once a working key exists. Every number in this README was
-  produced with the LLM switched off.
+- **The LLM is verified but not load-bearing.** One live call succeeded and
+  every proposal validated, but on that input the model reached the same answer
+  as the deterministic scorer — so its value on a genuinely harder residual is
+  demonstrated by design and by contract tests, not by a measured win. Every
+  accuracy number here was produced with it switched off.
 - **The Razorpay test account is empty.** Connectivity, authentication, test-mode
   enforcement and provenance labelling are verified against the live API; there
   are simply no payments, refunds or settlements in the account to ingest.

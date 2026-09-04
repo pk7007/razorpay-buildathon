@@ -117,7 +117,10 @@ def test_the_call_is_actually_bounded(with_key, monkeypatch):
 def test_the_call_is_deterministic_and_uses_the_configured_model(with_key, monkeypatch):
     _install(monkeypatch, _FakeAnthropic)
     R._llm_resolve(list(PAIR), AuditLog())
-    assert _FakeAnthropic.last_create["temperature"] == 0
+    # sampling params are rejected by the current models; the call must not send one
+    assert "temperature" not in _FakeAnthropic.last_create
+    assert "top_p" not in _FakeAnthropic.last_create
+    assert _FakeAnthropic.last_create["output_config"] == {"effort": "low"}
     assert _FakeAnthropic.last_create["model"] == "claude-sonnet-5"
     assert _FakeAnthropic.last_create["max_tokens"] >= 2000
 

@@ -310,10 +310,19 @@ def _llm_resolve(
         timeout=SETTINGS.llm_timeout_seconds,
         max_retries=SETTINGS.llm_max_retries,
     )
+    # No `temperature`. Sampling parameters were removed on the current Claude
+    # models and now return a 400 -- `temperature=0` here is what made
+    # verify_llm.py fail against claude-sonnet-5. The determinism it used to buy
+    # is not replaceable by another parameter, so it is not claimed anywhere:
+    # what makes a model answer safe to admit is the validation it goes through
+    # afterwards, not the sampling settings it was produced under.
+    #
+    # `effort: low` because this is a small, bounded, strictly-shaped
+    # classification over a handful of residual rows, not a reasoning problem.
     msg = client.messages.create(
         model=SETTINGS.llm_model,
         max_tokens=4000,
-        temperature=0,
+        output_config={"effort": "low"},
         system=_SYSTEM,
         messages=[{"role": "user", "content": json.dumps(payload, indent=2)}],
     )

@@ -66,7 +66,7 @@ invisibly.
 
 **"Where's the AI?"**
 The residual resolver — the ambiguous tail exact rules cannot place. It runs an
-LLM at temperature 0 with a strict JSON contract, and a deterministic heuristic
+LLM under a strict JSON contract, and a deterministic heuristic
 otherwise. Its proposals are checked arithmetically before they count, and a
 conservation assertion makes hallucination structurally impossible. The numbers
 on screen were produced with the LLM **off** — that is the floor, not the

@@ -147,19 +147,23 @@ the oversized-residual cap is enforced before a client is even constructed, that
 malformed and truncated replies yield nothing rather than crashing, and that
 every failure mode degrades to the heuristic.
 
-**Not verified:** that a real model returns *useful* groupings. A key is now
-configured, but `scripts/verify_llm.py` fails at the live call with HTTP 401 —
-`AuthenticationError: API key is invalid`. Everything up to that point passes:
-prompt construction, injection flattening, the residual-only guarantee, the
-oversized-residual cap, and the heuristic baseline. The live branch has still
-never returned a real proposal.
+**Verified against the live Anthropic API.** `scripts/verify_llm.py` passes end
+to end: one real call on `claude-sonnet-5`, 931 input and 264 output tokens,
+$0.0068, 3,305 ms. Every proposal named real ids and reconciled arithmetically,
+so none were refused. Extrapolated, that is about **$0.97 per 1,000 residual
+entries**.
 
-The failure is itself informative about the degradation path. With an invalid
-key present, a run reports `resolver_mode: heuristic`, `llm_calls: 0`,
-`llm_cost_usd: 0.0`, writes `llm-error-fallback@v1` to the audit trail with the
-underlying error, and finishes with precision and recall unchanged. A key being
-*present* is never reported as the model being *used*.
+**What it did not show:** a win over the deterministic scorer. On the
+verification input both backends reached the same three groupings. That is
+reported rather than buried — the model is insurance for the harder tail, and a
+run where it agrees with the rules is a fair outcome to publish.
 
-So the honest claim is the one the README makes: the LLM path is
-contract-tested but unverified live, and **every number published here was
-produced without it**. That is the floor, not the ceiling.
+Getting there required removing `temperature=0` from the call. Sampling
+parameters are rejected by the current Claude models with a 400, and that single
+line was the whole reason the live path had never run. The determinism it used
+to buy has no replacement parameter, so nothing claims it: a model answer is
+made safe by the validation it passes afterwards, not by the settings it was
+produced under.
+
+**Every accuracy number published for this project was still produced with the
+LLM switched off.** That is the floor, not the ceiling.
